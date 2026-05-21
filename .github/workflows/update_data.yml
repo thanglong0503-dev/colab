@@ -35,7 +35,7 @@ jobs:
 
     - name: Kích hoạt Bot chạy dữ liệu
       run: |
-        python RS_DATA.py # <--- THAY TÊN FILE PYTHON CỦA NGÀI VÀO ĐÂY
+        python main.py
 
     - name: Dọn dẹp dấu vết (Xóa credentials)
       if: always()

@@ -5,9 +5,10 @@ from oauth2client.service_account import ServiceAccountCredentials
 from vnstock import listing_companies, stock_historical_data
 from datetime import datetime, timedelta
 from tqdm import tqdm
+import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
-import requests # <--- Vũ khí mới để gọi API trực tiếp
+import requests
 
 warnings.filterwarnings('ignore')
 
@@ -28,7 +29,6 @@ def get_google_sheet(worksheet_name):
 
 def process_ticker(ticker, industry, start_date, end_date):
     try:
-        # 1. LẤY DỮ LIỆU HÀNH VI GIÁ (OHLCV) TỪ VNSTOCK
         df = stock_historical_data(symbol=ticker, start_date=start_date, end_date=end_date, resolution='1D', type='stock')
         if df is None or len(df) < 66: return None 
         
@@ -43,7 +43,6 @@ def process_ticker(ticker, industry, start_date, end_date):
         if avg_value < (MIN_LIQUIDITY * 1000) or close_price < MIN_PRICE: return None 
         if (volume.tail(20) == 0).sum() > 3: return None
 
-        # 2. TÍNH TOÁN CÁC CHỈ BÁO KỸ THUẬT NÂNG CAO
         ma5 = close.rolling(5).mean().iloc[-1]
         ma20 = close.rolling(20).mean().iloc[-1]
         
@@ -79,7 +78,6 @@ def process_ticker(ticker, industry, start_date, end_date):
         mfi_14 = 100 - (100 / (1 + (pos_flow_sum / neg_flow_sum)))
         mfi_val = float(mfi_14.iloc[-1])
 
-        # 3. CHẤM ĐIỂM
         score = 0
         score += 1 if close_price > ma5 else -1
         score += 1 if close_price > ma20 else -1
@@ -97,13 +95,8 @@ def process_ticker(ticker, industry, start_date, end_date):
         else:
             tech_status = "TRUNG TÍNH"
 
-        # ==========================================
-        # 4. BẮN TỈA API TRỰC TIẾP ĐỂ LẤY DỮ LIỆU CƠ BẢN
-        # ==========================================
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        
         try:
-            # Gõ cửa nhà TCBS lấy tỷ số tài chính
             ratio_url = f"https://apipubaws.tcbs.com.vn/tcanalysis/v1/finance/{ticker}/financialratio?yearly=0&isAll=false"
             ratio_data = requests.get(ratio_url, headers=headers, timeout=5).json()
             if len(ratio_data) > 0:
@@ -118,11 +111,10 @@ def process_ticker(ticker, industry, start_date, end_date):
             pe = pb = roe = debt_equity = 0.0
             
         try:
-            # Gõ cửa lấy khối lượng cổ phiếu để tính vốn hóa
             overview_url = f"https://apipubaws.tcbs.com.vn/tcanalysis/v1/ticker/{ticker}/overview"
             overview_data = requests.get(overview_url, headers=headers, timeout=5).json()
-            out_share = float(overview_data.get('outstandingShare', 0)) # Đơn vị: triệu cổ
-            market_cap = round((out_share * close_price) / 1000, 1) # Vốn hóa Tỷ VNĐ
+            out_share = float(overview_data.get('outstandingShare', 0))
+            market_cap = round((out_share * close_price) / 1000, 1)
         except:
             market_cap = 0.0
 
@@ -155,7 +147,7 @@ def process_ticker(ticker, industry, start_date, end_date):
         return None
 
 def main():
-    print("🚀 Khởi động FinceptTerminal Bot (Bắn tỉa Direct API)...")
+    print("🚀 Khởi động FinceptTerminal Bot (Tích hợp Auto-Kill treo máy)...")
     df_companies = listing_companies(live=False)
     tickers_list = df_companies[['ticker', 'industry']].values.tolist()
     
@@ -164,10 +156,19 @@ def main():
     
     raw_results = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(process_ticker, t[0], t[1], start_date, end_date) for t in tickers_list]
+        futures = {executor.submit(process_ticker, t[0], t[1], start_date, end_date): t[0] for t in tickers_list}
+        
+        # CƠ CHẾ CHỐNG TREO: Bắt buộc mỗi mã chỉ được chạy tối đa 20 giây!
         for future in tqdm(as_completed(futures), total=len(tickers_list)):
-            res = future.result()
-            if res: raw_results.append(res)
+            try:
+                res = future.result(timeout=20) # CẦU DAO TỰ ĐỘNG Ở ĐÂY
+                if res: raw_results.append(res)
+            except concurrent.futures.TimeoutError:
+                ticker = futures[future]
+                print(f"⚠️ Bỏ qua mã {ticker} vì máy chủ phản hồi quá chậm!")
+                continue
+            except Exception:
+                continue
 
     df_final = pd.DataFrame(raw_results)
     
@@ -185,7 +186,7 @@ def main():
         ws_rs = get_google_sheet("RS_DATA")
         ws_rs.clear()
         ws_rs.update([df_rs_up.columns.values.tolist()] + df_rs_up.values.tolist())
-        print("✅ HOÀN TẤT! Dữ liệu đã sẵn sàng để tích hợp lên Web.")
+        print("✅ HOÀN TẤT! Dữ liệu đã sẵn sàng.")
     else:
         print("❌ Lỗi: Không có dữ liệu đầu ra.")
 

@@ -1,12 +1,8 @@
 name: Tự động cập nhật dữ liệu FinceptTerminal
 
-# Lên lịch chạy tự động (Cron job)
 on:
   schedule:
-    # Chạy vào 15:15 chiều giờ Việt Nam (Tức 08:15 UTC), từ Thứ 2 đến Thứ 6
     - cron: '15 8 * * 1-5'
-  
-  # Cho phép Ngài bấm nút chạy thủ công bất cứ lúc nào
   workflow_dispatch:
 
 jobs:
@@ -25,7 +21,7 @@ jobs:
     - name: Cài đặt thư viện (Dependencies)
       run: |
         python -m pip install --upgrade pip
-        pip install pandas numpy gspread oauth2client vnstock==0.2.9.2.2 tqdm beautifulsoup4
+        pip install pandas numpy gspread oauth2client vnstock==0.2.9.2.2 tqdm beautifulsoup4 packaging
 
     - name: Khôi phục File Credentials từ Két sắt
       env:

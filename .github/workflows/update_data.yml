@@ -22,10 +22,7 @@ jobs:
       with:
         python-version: '3.10' # Có thể đổi version tùy Ngài
 
-    - name: Cài đặt thư viện (Dependencies)
-      run: |
-        python -m pip install --upgrade pip
-        pip install pandas numpy gspread oauth2client vnstock tqdm
+    pip install pandas numpy gspread oauth2client vnstock==0.2.28.2 tqdm
 
     - name: Khôi phục File Credentials từ Két sắt
       env:

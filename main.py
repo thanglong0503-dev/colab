@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from vnstock import listing_companies, stock_historical_data, company_overview
+from vnstock import listing_companies, stock_historical_data, company_overview, financial_ratio
 from datetime import datetime, timedelta
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -97,16 +97,24 @@ def process_ticker(ticker, industry, start_date, end_date):
         else:
             tech_status = "TRUNG TÍNH"
 
-        # 4. LẤY DỮ LIỆU CƠ BẢN
+        # 4. LẤY DỮ LIỆU CƠ BẢN BẰNG FINANCIAL RATIO
         try:
-            overview = company_overview(ticker)
-            market_cap = round(float(overview['marketCap'].iloc[0]) / 1000, 1) 
-            pe = round(float(overview['pe'].iloc[0]), 2)
-            pb = round(float(overview['pb'].iloc[0]), 2)
-            roe = round(float(overview['roe'].iloc[0]) * 100, 2)
-            debt_equity = round(float(overview['debtOnEquity'].iloc[0]), 2)
+            # Lấy các tỷ số tài chính (P/E, P/B, ROE, Nợ/Vốn chủ)
+            fr = financial_ratio(symbol=ticker, report_range='yearly', is_all=False)
+            pe = round(float(fr['priceToEarning'].iloc[0]), 2)
+            pb = round(float(fr['priceToBook'].iloc[0]), 2)
+            roe = round(float(fr['roe'].iloc[0]) * 100, 2) # Quy ra %
+            debt_equity = round(float(fr['debtOnEquity'].iloc[0]), 2)
         except:
-            market_cap = pe = pb = roe = debt_equity = 0.0
+            pe = pb = roe = debt_equity = 0.0
+            
+        try:
+            # Lấy số lượng cổ phiếu lưu hành (đơn vị: triệu cổ) để tính Vốn Hóa
+            overview = company_overview(ticker)
+            out_share = float(overview['outstandingShare'].iloc[0]) 
+            market_cap = round((out_share * close_price) / 1000, 1) # Quy ra Tỷ VNĐ
+        except:
+            market_cap = 0.0
 
         perf_1m = (close_price - close.iloc[-22]) / close.iloc[-22]
         perf_3m = (close_price - close.iloc[-66]) / close.iloc[-66]

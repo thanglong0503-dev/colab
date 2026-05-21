@@ -15,10 +15,10 @@ jobs:
 
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4 # Thay v3 thành v4
 
     - name: Cài đặt Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5 # Thay v4 thành v5
       with:
         python-version: '3.10'
 

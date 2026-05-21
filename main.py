@@ -2,11 +2,12 @@ import pandas as pd
 import numpy as np
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from vnstock import listing_companies, stock_historical_data, company_overview, financial_ratio
+from vnstock import listing_companies, stock_historical_data
 from datetime import datetime, timedelta
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
+import requests # <--- Vũ khí mới để gọi API trực tiếp
 
 warnings.filterwarnings('ignore')
 
@@ -27,7 +28,7 @@ def get_google_sheet(worksheet_name):
 
 def process_ticker(ticker, industry, start_date, end_date):
     try:
-        # 1. LẤY DỮ LIỆU HÀNH VI GIÁ (OHLCV)
+        # 1. LẤY DỮ LIỆU HÀNH VI GIÁ (OHLCV) TỪ VNSTOCK
         df = stock_historical_data(symbol=ticker, start_date=start_date, end_date=end_date, resolution='1D', type='stock')
         if df is None or len(df) < 66: return None 
         
@@ -39,7 +40,6 @@ def process_ticker(ticker, industry, start_date, end_date):
         close_price = float(close.iloc[-1])
         avg_value = (volume.tail(20).mean() * close_price) / 1e6 
         
-        # Bộ lọc rác
         if avg_value < (MIN_LIQUIDITY * 1000) or close_price < MIN_PRICE: return None 
         if (volume.tail(20) == 0).sum() > 3: return None
 
@@ -97,22 +97,32 @@ def process_ticker(ticker, industry, start_date, end_date):
         else:
             tech_status = "TRUNG TÍNH"
 
-        # 4. LẤY DỮ LIỆU CƠ BẢN BẰNG FINANCIAL RATIO
+        # ==========================================
+        # 4. BẮN TỈA API TRỰC TIẾP ĐỂ LẤY DỮ LIỆU CƠ BẢN
+        # ==========================================
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        
         try:
-            # Lấy các tỷ số tài chính (P/E, P/B, ROE, Nợ/Vốn chủ)
-            fr = financial_ratio(symbol=ticker, report_range='yearly', is_all=False)
-            pe = round(float(fr['priceToEarning'].iloc[0]), 2)
-            pb = round(float(fr['priceToBook'].iloc[0]), 2)
-            roe = round(float(fr['roe'].iloc[0]) * 100, 2) # Quy ra %
-            debt_equity = round(float(fr['debtOnEquity'].iloc[0]), 2)
+            # Gõ cửa nhà TCBS lấy tỷ số tài chính
+            ratio_url = f"https://apipubaws.tcbs.com.vn/tcanalysis/v1/finance/{ticker}/financialratio?yearly=0&isAll=false"
+            ratio_data = requests.get(ratio_url, headers=headers, timeout=5).json()
+            if len(ratio_data) > 0:
+                latest = ratio_data[0]
+                pe = round(float(latest.get('priceToEarning', 0)), 2)
+                pb = round(float(latest.get('priceToBook', 0)), 2)
+                roe = round(float(latest.get('roe', 0)) * 100, 2)
+                debt_equity = round(float(latest.get('debtOnEquity', 0)), 2)
+            else:
+                pe = pb = roe = debt_equity = 0.0
         except:
             pe = pb = roe = debt_equity = 0.0
             
         try:
-            # Lấy số lượng cổ phiếu lưu hành (đơn vị: triệu cổ) để tính Vốn Hóa
-            overview = company_overview(ticker)
-            out_share = float(overview['outstandingShare'].iloc[0]) 
-            market_cap = round((out_share * close_price) / 1000, 1) # Quy ra Tỷ VNĐ
+            # Gõ cửa lấy khối lượng cổ phiếu để tính vốn hóa
+            overview_url = f"https://apipubaws.tcbs.com.vn/tcanalysis/v1/ticker/{ticker}/overview"
+            overview_data = requests.get(overview_url, headers=headers, timeout=5).json()
+            out_share = float(overview_data.get('outstandingShare', 0)) # Đơn vị: triệu cổ
+            market_cap = round((out_share * close_price) / 1000, 1) # Vốn hóa Tỷ VNĐ
         except:
             market_cap = 0.0
 
@@ -145,7 +155,7 @@ def process_ticker(ticker, industry, start_date, end_date):
         return None
 
 def main():
-    print("🚀 Khởi động FinceptTerminal Bot (Bản nâng cấp Fundamental & Technical)...")
+    print("🚀 Khởi động FinceptTerminal Bot (Bắn tỉa Direct API)...")
     df_companies = listing_companies(live=False)
     tickers_list = df_companies[['ticker', 'industry']].values.tolist()
     

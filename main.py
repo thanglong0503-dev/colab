@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from vnstock import listing_companies, stock_historical_data, ticker_overview
+from vnstock import listing_companies, stock_historical_data, company_overview
 from datetime import datetime, timedelta
 from tqdm import tqdm
 import concurrent.futures
@@ -92,9 +92,9 @@ def process_ticker(ticker, industry, start_date, end_date):
         else:
             tech_status = "TRUNG TÍNH"
 
-        # 4. TỰ TÍNH TAY DỮ LIỆU CƠ BẢN TỪ TICKER_OVERVIEW
+        # 4. TỰ TÍNH TAY DỮ LIỆU CƠ BẢN TỪ COMPANY_OVERVIEW
         try:
-            overview = ticker_overview(ticker) 
+            overview = company_overview(ticker) 
             out_share = float(overview['outstandingShare'].iloc[0]) 
             market_cap = round((out_share * close_price) / 1000, 1) # Vốn hóa
             

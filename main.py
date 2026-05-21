@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # ==========================================
 MIN_LIQUIDITY = 1.0  # Tối thiểu 1 tỷ VNĐ/phiên
 MIN_PRICE = 2.0      # Tối thiểu giá 2,000 VNĐ
-SHEET_NAME = "LINANCE_DB"
+SHEET_NAME = "RS_DATA"
 CREDENTIALS_FILE = "credentials.json"
 MAX_WORKERS = 10
 

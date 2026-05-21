@@ -2,17 +2,20 @@ import pandas as pd
 import numpy as np
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from vnstock import listing_companies, stock_historical_data
+from vnstock import listing_companies, stock_historical_data, ticker_overview
 from datetime import datetime, timedelta
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import warnings
+
+warnings.filterwarnings('ignore')
 
 # ==========================================
-# CẤU HÌNH PHỄU LỌC
+# CẤU HÌNH HỆ THỐNG FINCEPT TERMINAL
 # ==========================================
 MIN_LIQUIDITY = 1.0  
 MIN_PRICE = 2.0      
-SHEET_NAME = "RS_DATA" # Tên file Google Sheets của Ngài
+SHEET_NAME = "RS_DATA"
 CREDENTIALS_FILE = "credentials.json"
 MAX_WORKERS = 10
 
@@ -24,75 +27,126 @@ def get_google_sheet(worksheet_name):
 
 def process_ticker(ticker, industry, start_date, end_date):
     try:
-        # Tải dữ liệu lịch sử từ vnstock
+        # 1. LẤY DỮ LIỆU HÀNH VI GIÁ (OHLCV)
         df = stock_historical_data(symbol=ticker, start_date=start_date, end_date=end_date, resolution='1D', type='stock')
         if df is None or len(df) < 66: return None 
         
-        # --- BỘ LỌC OHLCV NÂNG CẤP CHO AI ---
-        open_price = float(df['open'].iloc[-1])
-        high_price = float(df['high'].iloc[-1])
-        low_price = float(df['low'].iloc[-1])
-        close_price = float(df['close'].iloc[-1])
-        volume = float(df['volume'].iloc[-1])
         close = df['close']
+        high = df['high']
+        low = df['low']
+        volume = df['volume']
         
-        avg_vol = df['volume'].tail(20).mean()
-        avg_value = (avg_vol * close_price) / 1e6 
+        close_price = float(close.iloc[-1])
+        avg_value = (volume.tail(20).mean() * close_price) / 1e6 
         
-        if avg_value < (MIN_LIQUIDITY * 1000) or close_price < MIN_PRICE:
-            return None 
+        # Bộ lọc rác
+        if avg_value < (MIN_LIQUIDITY * 1000) or close_price < MIN_PRICE: return None 
+        if (volume.tail(20) == 0).sum() > 3: return None
 
-        zero_vol_days = (df['volume'].tail(20) == 0).sum()
-        if zero_vol_days > 3: return None
-
-        # --- TÍNH TOÁN SỨC MẠNH ---
-        perf_1m = (close_price - close.iloc[-22]) / close.iloc[-22]
-        perf_3m = (close_price - close.iloc[-66]) / close.iloc[-66]
+        # 2. TÍNH TOÁN CÁC CHỈ BÁO KỸ THUẬT NÂNG CAO (NATIVE PANDAS)
+        # Đường trung bình động
+        ma5 = close.rolling(5).mean().iloc[-1]
+        ma20 = close.rolling(20).mean().iloc[-1]
         
-        ma20 = close.tail(20).mean()
-        ma50 = close.tail(50).mean()
-        score = 0
-        if close_price > ma20: score += 1
-        if close_price > ma50: score += 1
-        if ma20 > ma50: score += 1
-        if close_price > close.iloc[-5]: score += 1 
-        if avg_value > (df['volume'].shift(1).tail(20).mean() * close.shift(1).tail(20).mean() / 1e6): score += 1 
-
-        # --- TÍNH TOÁN RSI & MACD CHO AI AGENT ---
+        # Donchian Channels (C > HHV, C < LLV)
+        hhv10 = high.rolling(10).max().iloc[-1]
+        llv10 = low.rolling(10).min().iloc[-1]
+        
+        # RSI (14)
         delta = close.diff()
         gain = delta.clip(lower=0).rolling(window=14, min_periods=1).mean()
         loss = -delta.clip(upper=0).rolling(window=14, min_periods=1).mean()
-        rs = gain / loss
-        rsi_14 = 100 - (100 / (1 + rs))
-        latest_rsi = round(float(rsi_14.iloc[-1]), 2) if not pd.isna(rsi_14.iloc[-1]) else 50.0
+        rsi_14 = 100 - (100 / (1 + (gain / loss)))
+        rsi_val = float(rsi_14.iloc[-1])
 
+        # MACD
         ema12 = close.ewm(span=12, adjust=False).mean()
         ema26 = close.ewm(span=26, adjust=False).mean()
         macd = ema12 - ema26
         signal = macd.ewm(span=9, adjust=False).mean()
-        macd_hist = round(float((macd - signal).iloc[-1]), 3)
+        macd_val = float(macd.iloc[-1])
+        signal_val = float(signal.iloc[-1])
+
+        # Stochastic (14, 3, 3)
+        low14 = low.rolling(14).min()
+        high14 = high.rolling(14).max()
+        k_percent = 100 * ((close - low14) / (high14 - low14))
+        d_percent = k_percent.rolling(3).mean()
+        k_val = float(k_percent.iloc[-1])
+        d_val = float(d_percent.iloc[-1])
+
+        # MFI (14) - Chỉ báo Dòng tiền
+        typical_price = (high + low + close) / 3
+        raw_money_flow = typical_price * volume
+        pos_flow = np.where(typical_price > typical_price.shift(1), raw_money_flow, 0)
+        neg_flow = np.where(typical_price < typical_price.shift(1), raw_money_flow, 0)
+        pos_flow_sum = pd.Series(pos_flow).rolling(14).sum()
+        neg_flow_sum = pd.Series(neg_flow).rolling(14).sum()
+        mfi_14 = 100 - (100 / (1 + (pos_flow_sum / neg_flow_sum)))
+        mfi_val = float(mfi_14.iloc[-1])
+
+        # 3. HỆ THỐNG CHẤM ĐIỂM KỸ THUẬT (SCORING)
+        # Theo form tiêu chuẩn: Cộng 1 điểm nếu Khả quan, Trừ 1 điểm nếu Tiêu cực
+        score = 0
+        score += 1 if close_price > ma5 else -1
+        score += 1 if close_price > ma20 else -1
+        score += 1 if ma5 > ma20 else -1
+        score += 1 if rsi_val > 50 else -1
+        score += 1 if mfi_val > 50 else -1
+        score += 1 if macd_val > signal_val else -1
+        score += 1 if k_val > d_val else -1
+        score += 1 if close_price >= hhv10 else (-1 if close_price <= llv10 else 0)
+
+        # Trạng thái Technical
+        if score >= 4:
+            tech_status = "KHẢ QUAN"
+        elif score <= -4:
+            tech_status = "TIÊU CỰC"
+        else:
+            tech_status = "TRUNG TÍNH"
+
+        # 4. LẤY DỮ LIỆU CƠ BẢN (FUNDAMENTALS)
+        try:
+            overview = ticker_overview(ticker)
+            market_cap = round(float(overview['marketCap'].iloc[0]) / 1000, 1) # Tỷ VNĐ
+            pe = round(float(overview['pe'].iloc[0]), 2)
+            pb = round(float(overview['pb'].iloc[0]), 2)
+            roe = round(float(overview['roe'].iloc[0]) * 100, 2)
+            debt_equity = round(float(overview['debtOnEquity'].iloc[0]), 2)
+        except:
+            market_cap = pe = pb = roe = debt_equity = 0.0
+
+        # Tích lũy RS
+        perf_1m = (close_price - close.iloc[-22]) / close.iloc[-22]
+        perf_3m = (close_price - close.iloc[-66]) / close.iloc[-66]
 
         return {
             "Mã CK": ticker,
             "Ngành": industry,
             "RS_1M": perf_1m,
             "RS_3M": perf_3m,
-            "Điểm_KT": score,
-            "Thanh_Khoản_": round(avg_value / 1000, 2),
+            "Tech_Score": score,
+            "Trạng Thái": tech_status,
+            "Thanh_Khoản_Tỷ": round(avg_value / 1000, 2),
             "Giá": close_price,
-            # Các cột vũ khí mới
-            "Open": open_price,
-            "High": high_price,
-            "Low": low_price,
-            "Volume": volume,
-            "RSI_14": latest_rsi,
-            "MACD_Hist": macd_hist
+            "Vốn Hóa": market_cap,
+            "P/E": pe,
+            "P/B": pb,
+            "ROE (%)": roe,
+            "Nợ/Vốn Chủ": debt_equity,
+            "Open": float(df['open'].iloc[-1]),
+            "High": float(high.iloc[-1]),
+            "Low": float(low.iloc[-1]),
+            "Volume": float(volume.iloc[-1]),
+            "RSI_14": round(rsi_val, 2),
+            "MFI_14": round(mfi_val, 2),
+            "MACD_Hist": round(macd_val - signal_val, 3)
         }
-    except:
+    except Exception as e:
         return None
 
 def main():
-    print("🚀 Khởi động Phễu lọc FinceptTerminal (Bản nâng cấp AI)...")
+    print("🚀 Khởi động FinceptTerminal Bot (Bản nâng cấp Fundamental & Technical)...")
     df_companies = listing_companies(live=False)
     tickers_list = df_companies[['ticker', 'industry']].values.tolist()
     
@@ -108,21 +162,24 @@ def main():
 
     df_final = pd.DataFrame(raw_results)
     
-    # Xếp hạng RS 
-    df_final['RS_1M'] = (df_final['RS_1M'].rank(pct=True) * 99).astype(int) + 1
-    df_final['RS_3M'] = (df_final['RS_3M'].rank(pct=True) * 99).astype(int) + 1
-    
-    # Cấu trúc xuất file đầy đủ
-    final_columns = ['Mã CK', 'Ngành', 'RS_1M', 'RS_3M', 'Điểm_KT', 'Thanh_Khoản_', 'Giá', 
-                     'Open', 'High', 'Low', 'Volume', 'RSI_14', 'MACD_Hist']
-    df_rs_up = df_final[final_columns].fillna("")
-    
-    # Đẩy lên Sheet
-    print(f"☁️ Đã lọc còn {len(df_rs_up)} mã chất lượng. Đang đẩy lên Google Sheets...")
-    ws_rs = get_google_sheet("RS_DATA") # Đẩy vào tab RS_DATA
-    ws_rs.clear()
-    ws_rs.update([df_rs_up.columns.values.tolist()] + df_rs_up.values.tolist())
-    print("✅ HOÀN TẤT! Dữ liệu đã sẵn sàng cho hệ thống AI.")
+    if not df_final.empty:
+        df_final['RS_1M'] = (df_final['RS_1M'].rank(pct=True) * 99).astype(int) + 1
+        df_final['RS_3M'] = (df_final['RS_3M'].rank(pct=True) * 99).astype(int) + 1
+        
+        # Cấu trúc xuất file đầy đủ 20 cột vũ khí
+        final_columns = ['Mã CK', 'Ngành', 'RS_1M', 'RS_3M', 'Tech_Score', 'Trạng Thái', 'Thanh_Khoản_Tỷ', 'Giá', 
+                         'Vốn Hóa', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ', 
+                         'Open', 'High', 'Low', 'Volume', 'RSI_14', 'MFI_14', 'MACD_Hist']
+        
+        df_rs_up = df_final[final_columns].fillna("")
+        
+        print(f"☁️ Đang đẩy {len(df_rs_up)} mã chất lượng lên kho dữ liệu nội bộ...")
+        ws_rs = get_google_sheet("RS_DATA")
+        ws_rs.clear()
+        ws_rs.update([df_rs_up.columns.values.tolist()] + df_rs_up.values.tolist())
+        print("✅ HOÀN TẤT! Dữ liệu đã sẵn sàng để tích hợp lên Web.")
+    else:
+        print("❌ Lỗi: Không có dữ liệu đầu ra.")
 
 if __name__ == "__main__":
     main()

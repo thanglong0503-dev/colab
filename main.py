@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from vnstock import listing_companies, stock_historical_data, ticker_overview
+from vnstock import listing_companies, stock_historical_data, company_overview
 from datetime import datetime, timedelta
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -43,23 +43,19 @@ def process_ticker(ticker, industry, start_date, end_date):
         if avg_value < (MIN_LIQUIDITY * 1000) or close_price < MIN_PRICE: return None 
         if (volume.tail(20) == 0).sum() > 3: return None
 
-        # 2. TÍNH TOÁN CÁC CHỈ BÁO KỸ THUẬT NÂNG CAO (NATIVE PANDAS)
-        # Đường trung bình động
+        # 2. TÍNH TOÁN CÁC CHỈ BÁO KỸ THUẬT NÂNG CAO
         ma5 = close.rolling(5).mean().iloc[-1]
         ma20 = close.rolling(20).mean().iloc[-1]
         
-        # Donchian Channels (C > HHV, C < LLV)
         hhv10 = high.rolling(10).max().iloc[-1]
         llv10 = low.rolling(10).min().iloc[-1]
         
-        # RSI (14)
         delta = close.diff()
         gain = delta.clip(lower=0).rolling(window=14, min_periods=1).mean()
         loss = -delta.clip(upper=0).rolling(window=14, min_periods=1).mean()
         rsi_14 = 100 - (100 / (1 + (gain / loss)))
         rsi_val = float(rsi_14.iloc[-1])
 
-        # MACD
         ema12 = close.ewm(span=12, adjust=False).mean()
         ema26 = close.ewm(span=26, adjust=False).mean()
         macd = ema12 - ema26
@@ -67,7 +63,6 @@ def process_ticker(ticker, industry, start_date, end_date):
         macd_val = float(macd.iloc[-1])
         signal_val = float(signal.iloc[-1])
 
-        # Stochastic (14, 3, 3)
         low14 = low.rolling(14).min()
         high14 = high.rolling(14).max()
         k_percent = 100 * ((close - low14) / (high14 - low14))
@@ -75,7 +70,6 @@ def process_ticker(ticker, industry, start_date, end_date):
         k_val = float(k_percent.iloc[-1])
         d_val = float(d_percent.iloc[-1])
 
-        # MFI (14) - Chỉ báo Dòng tiền
         typical_price = (high + low + close) / 3
         raw_money_flow = typical_price * volume
         pos_flow = np.where(typical_price > typical_price.shift(1), raw_money_flow, 0)
@@ -85,8 +79,7 @@ def process_ticker(ticker, industry, start_date, end_date):
         mfi_14 = 100 - (100 / (1 + (pos_flow_sum / neg_flow_sum)))
         mfi_val = float(mfi_14.iloc[-1])
 
-        # 3. HỆ THỐNG CHẤM ĐIỂM KỸ THUẬT (SCORING)
-        # Theo form tiêu chuẩn: Cộng 1 điểm nếu Khả quan, Trừ 1 điểm nếu Tiêu cực
+        # 3. CHẤM ĐIỂM
         score = 0
         score += 1 if close_price > ma5 else -1
         score += 1 if close_price > ma20 else -1
@@ -97,7 +90,6 @@ def process_ticker(ticker, industry, start_date, end_date):
         score += 1 if k_val > d_val else -1
         score += 1 if close_price >= hhv10 else (-1 if close_price <= llv10 else 0)
 
-        # Trạng thái Technical
         if score >= 4:
             tech_status = "KHẢ QUAN"
         elif score <= -4:
@@ -105,10 +97,10 @@ def process_ticker(ticker, industry, start_date, end_date):
         else:
             tech_status = "TRUNG TÍNH"
 
-        # 4. LẤY DỮ LIỆU CƠ BẢN (FUNDAMENTALS)
+        # 4. LẤY DỮ LIỆU CƠ BẢN
         try:
-            overview = ticker_overview(ticker)
-            market_cap = round(float(overview['marketCap'].iloc[0]) / 1000, 1) # Tỷ VNĐ
+            overview = company_overview(ticker)
+            market_cap = round(float(overview['marketCap'].iloc[0]) / 1000, 1) 
             pe = round(float(overview['pe'].iloc[0]), 2)
             pb = round(float(overview['pb'].iloc[0]), 2)
             roe = round(float(overview['roe'].iloc[0]) * 100, 2)
@@ -116,7 +108,6 @@ def process_ticker(ticker, industry, start_date, end_date):
         except:
             market_cap = pe = pb = roe = debt_equity = 0.0
 
-        # Tích lũy RS
         perf_1m = (close_price - close.iloc[-22]) / close.iloc[-22]
         perf_3m = (close_price - close.iloc[-66]) / close.iloc[-66]
 
@@ -166,7 +157,6 @@ def main():
         df_final['RS_1M'] = (df_final['RS_1M'].rank(pct=True) * 99).astype(int) + 1
         df_final['RS_3M'] = (df_final['RS_3M'].rank(pct=True) * 99).astype(int) + 1
         
-        # Cấu trúc xuất file đầy đủ 20 cột vũ khí
         final_columns = ['Mã CK', 'Ngành', 'RS_1M', 'RS_3M', 'Tech_Score', 'Trạng Thái', 'Thanh_Khoản_Tỷ', 'Giá', 
                          'Vốn Hóa', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ', 
                          'Open', 'High', 'Low', 'Volume', 'RSI_14', 'MFI_14', 'MACD_Hist']

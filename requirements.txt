@@ -3,5 +3,5 @@ pandas
 gspread
 google-auth
 google-genai
-vnstock
-duckduckgo-search
+vnstock3
+

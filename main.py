@@ -2,12 +2,13 @@ import pandas as pd
 import numpy as np
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from vnstock import listing_companies, stock_historical_data, company_overview
+from vnstock import listing_companies, stock_historical_data
 from datetime import datetime, timedelta
 from tqdm import tqdm
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
+import yfinance as yf # VŨ KHÍ MỚI: YAHOO FINANCE
 
 warnings.filterwarnings('ignore')
 
@@ -18,7 +19,7 @@ MIN_LIQUIDITY = 1.0
 MIN_PRICE = 2.0      
 SHEET_NAME = "RS_DATA"
 CREDENTIALS_FILE = "credentials.json"
-MAX_WORKERS = 5 # Giữ ở mức 5 để không bị các hệ thống chặn vì DDoS
+MAX_WORKERS = 5 
 
 def get_google_sheet(worksheet_name):
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -28,7 +29,7 @@ def get_google_sheet(worksheet_name):
 
 def process_ticker(ticker, industry, start_date, end_date):
     try:
-        # 1. LẤY DỮ LIỆU HÀNH VI GIÁ TỪ VNSTOCK
+        # 1. LẤY DỮ LIỆU HÀNH VI GIÁ TỪ VNSTOCK (Vẫn mượt)
         df = stock_historical_data(symbol=ticker, start_date=start_date, end_date=end_date, resolution='1D', type='stock')
         if df is None or len(df) < 66: return None 
         
@@ -40,11 +41,10 @@ def process_ticker(ticker, industry, start_date, end_date):
         close_price = float(close.iloc[-1])
         avg_value = (volume.tail(20).mean() * close_price) / 1e6 
         
-        # Lọc rác và thanh khoản
         if avg_value < (MIN_LIQUIDITY * 1000) or close_price < MIN_PRICE: return None 
         if (volume.tail(20) == 0).sum() > 3: return None
 
-        # 2. TÍNH TOÁN CÁC CHỈ BÁO KỸ THUẬT NÂNG CAO BẰNG TAY (PANDAS)
+        # 2. CHẤM ĐIỂM KỸ THUẬT
         ma5 = close.rolling(5).mean().iloc[-1]
         ma20 = close.rolling(20).mean().iloc[-1]
         hhv10 = high.rolling(10).max().iloc[-1]
@@ -74,7 +74,6 @@ def process_ticker(ticker, industry, start_date, end_date):
         neg_flow = np.where(typical_price < typical_price.shift(1), raw_money_flow, 0)
         mfi_val = float((100 - (100 / (1 + (pd.Series(pos_flow).rolling(14).sum() / pd.Series(neg_flow).rolling(14).sum())))).iloc[-1])
 
-        # 3. CHẤM ĐIỂM KỸ THUẬT (FORM TIÊU CHUẨN)
         score = 0
         score += 1 if close_price > ma5 else -1
         score += 1 if close_price > ma20 else -1
@@ -85,28 +84,27 @@ def process_ticker(ticker, industry, start_date, end_date):
         score += 1 if k_val > d_val else -1
         score += 1 if close_price >= hhv10 else (-1 if close_price <= llv10 else 0)
         
-        if score >= 4:
-            tech_status = "KHẢ QUAN"
-        elif score <= -4:
-            tech_status = "TIÊU CỰC"
-        else:
-            tech_status = "TRUNG TÍNH"
+        tech_status = "KHẢ QUAN" if score >= 4 else ("TIÊU CỰC" if score <= -4 else "TRUNG TÍNH")
 
-        # 4. TỰ TÍNH TAY DỮ LIỆU CƠ BẢN TỪ COMPANY_OVERVIEW
+        # ==========================================
+        # 3. LẤY DỮ LIỆU CƠ BẢN TỪ YAHOO FINANCE (QUỐC TẾ)
+        # ==========================================
         try:
-            overview = company_overview(ticker) 
-            out_share = float(overview['outstandingShare'].iloc[0]) 
-            market_cap = round((out_share * close_price) / 1000, 1) # Vốn hóa
+            # Gắn đuôi .VN để Yahoo hiểu đây là cổ phiếu Việt Nam
+            yf_ticker = yf.Ticker(f"{ticker}.VN")
+            info = yf_ticker.info
             
-            pe = round(float(overview['pe'].iloc[0]), 2) if 'pe' in overview.columns else 0.0
-            pb = round(float(overview['pb'].iloc[0]), 2) if 'pb' in overview.columns else 0.0
-            roe = round(float(overview['roe'].iloc[0]) * 100, 2) if 'roe' in overview.columns else 0.0
-            debt_equity = 0.0 # Bỏ qua tỷ lệ nợ
+            # Yahoo trả về marketCap bằng VND (rất lớn), ta chia cho 1 tỷ để ra Tỷ VNĐ
+            market_cap = round(info.get('marketCap', 0) / 1e9, 1) 
+            pe = round(info.get('trailingPE', 0), 2)
+            pb = round(info.get('priceToBook', 0), 2)
+            roe = round(info.get('returnOnEquity', 0) * 100, 2)
+            debt_equity = round(info.get('debtToEquity', 0), 2)
             
         except Exception as e:
             market_cap = pe = pb = roe = debt_equity = 0.0
 
-        # 5. TÍNH SỨC MẠNH GIÁ (MOMENTUM)
+        # 4. TÍNH SỨC MẠNH GIÁ (MOMENTUM)
         perf_1m = (close_price - close.iloc[-22]) / close.iloc[-22]
         perf_3m = (close_price - close.iloc[-66]) / close.iloc[-66]
 
@@ -136,7 +134,7 @@ def process_ticker(ticker, industry, start_date, end_date):
         return None
 
 def main():
-    print("🚀 Khởi động FinceptTerminal Bot (Bản tính tay tự lực cánh sinh)...")
+    print("🚀 Khởi động FinceptTerminal Bot (Dùng lõi API Quốc tế Yahoo Finance)...")
     df_companies = listing_companies(live=False)
     tickers_list = df_companies[['ticker', 'industry']].values.tolist()
     
@@ -144,18 +142,14 @@ def main():
     start_date = (datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")
     
     raw_results = []
-    # Khởi chạy đa luồng
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {executor.submit(process_ticker, t[0], t[1], start_date, end_date): t[0] for t in tickers_list}
         
-        # Cơ chế chống kẹt: Quá 25s không phản hồi thì bỏ qua
         for future in tqdm(as_completed(futures), total=len(tickers_list)):
             try:
-                res = future.result(timeout=25) 
+                res = future.result(timeout=30) # Yahoo đôi khi hơi chậm, nới lỏng ra 30s
                 if res: raw_results.append(res)
             except concurrent.futures.TimeoutError:
-                ticker = futures[future]
-                print(f"⚠️ Bỏ qua mã {ticker} vì hết thời gian chờ!")
                 continue
             except Exception:
                 continue
@@ -163,11 +157,9 @@ def main():
     df_final = pd.DataFrame(raw_results)
     
     if not df_final.empty:
-        # Chấm điểm RS (Percentile)
         df_final['RS_1M'] = (df_final['RS_1M'].rank(pct=True) * 99).astype(int) + 1
         df_final['RS_3M'] = (df_final['RS_3M'].rank(pct=True) * 99).astype(int) + 1
         
-        # Cấu trúc 20 cột vũ khí
         final_columns = ['Mã CK', 'Ngành', 'RS_1M', 'RS_3M', 'Tech_Score', 'Trạng Thái', 'Thanh_Khoản_Tỷ', 'Giá', 
                          'Vốn Hóa', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ', 
                          'Open', 'High', 'Low', 'Volume', 'RSI_14', 'MFI_14', 'MACD_Hist']

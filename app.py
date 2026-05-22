@@ -4,11 +4,9 @@ import gspread
 from google.oauth2.service_account import Credentials
 from google import genai
 from google.genai import types
-import vnstock
-from duckduckgo_search import DDGS # 🦆 Bí kíp tìm kiếm độc lập thay thế Google
 
 # Cấu hình giao diện
-st.set_page_config(page_title="Fincept AI Desk", page_icon="📈", layout="centered")
+st.set_page_config(page_title="LINANCE AI Desk", page_icon="📈", layout="centered")
 
 # --- UI/UX CUSTOM CSS (BINANCE STYLE) ---
 st.markdown("""
@@ -20,56 +18,51 @@ st.markdown("""
         --border-color: #EAECEF;
     }
     .stApp { background-color: var(--bg-white); color: var(--text-dark); }
-    .main-header { padding: 20px; border-bottom: 2px solid var(--primary-orange); margin-bottom: 30px; text-align: center; }
+    
+    /* Header chuyên nghiệp */
+    .main-header { 
+        padding: 20px; border-bottom: 2px solid var(--primary-orange); 
+        margin-bottom: 30px; text-align: center;
+    }
     h1 { color: var(--text-dark) !important; font-weight: 800 !important; }
-    div[data-testid="stChatMessage"] { background-color: #F8F9FA; border-radius: 12px; border: 1px solid var(--border-color); }
-    .stChatInput { border: 2px solid var(--primary-orange) !important; border-radius: 8px !important; }
+    
+    /* Chat bubbles */
+    div[data-testid="stChatMessage"] { background-color: #F8F9FA; border-radius: 12px; }
+    
+    /* Chat Input */
+    .stChatInput { border: 2px solid var(--primary-orange) !important; }
+    
+    /* Buttons */
+    div.stButton > button {
+        background-color: var(--primary-orange) !important;
+        color: white !important; font-weight: 700 !important;
+        border-radius: 6px !important; border: none !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<div class='main-header'><h1>📈 FINCEPT TERMINAL</h1><p>Hệ thống AI Phân tích Định lượng & Cập nhật Tin tức</p></div>", unsafe_allow_html=True)
+# Header
+st.markdown("<div class='main-header'><h1>LINANCE TERMINAL</h1><p>Hệ thống hỗ trợ phân tích định lượng AI</p></div>", unsafe_allow_html=True)
 
+# Lấy Chìa khóa từ Két sắt
 API_KEY = st.secrets["GEMINI_API_KEY"]
 
-# 1. HÀM TẢI DỮ LIỆU TĨNH (RS_DATA)
 @st.cache_data(ttl=3600)
 def load_data():
-    try:
-        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        client = gspread.authorize(creds)
-        worksheet = client.open("RS_DATA").worksheet("RS_DATA")
-        return pd.DataFrame(worksheet.get_all_records())
-    except Exception as e:
-        return pd.DataFrame()
-
-# 2. HÀM LẤY GIÁ REAL-TIME
-def get_live_price(ticker):
-    try:
-        df = vnstock.stock_quick_view(symbol=ticker)
-        if df is not None and not df.empty:
-            return float(df['price'].iloc[0])
-        return None
-    except:
-        return None
-
-# 3. 🛠️ TOOL TÌM KIẾM INTERNET ĐỘC LẬP (KHÔNG DÙNG QUOTA GOOGLE)
-def search_internet_for_news(query: str) -> str:
-    """Sử dụng công cụ này để tra cứu tin tức tài chính, báo cáo, và sự kiện vĩ mô mới nhất trên Internet."""
-    try:
-        results = DDGS().text(query, max_results=3, region='vn-tz')
-        if not results:
-            return "Không tìm thấy thông tin trên mạng."
-        return "\n".join([f"Tin tức: {r['title']}\nChi tiết: {r['body']}" for r in results])
-    except Exception as e:
-        return f"Lỗi kết nối mạng: {e}"
+    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    client = gspread.authorize(creds)
+    worksheet = client.open("RS_DATA").worksheet("RS_DATA")
+    return pd.DataFrame(worksheet.get_all_records())
 
 df = load_data()
 
 # Khởi tạo tin nhắn
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Fincept AI đã sẵn sàng. Bạn cần phân tích mã cổ phiếu nào?"}]
+    st.session_state.messages = [
+        {"role": "assistant", "content": "LINANCE AI đã sẵn sàng.Bạn cần phân tích cổ phiếu nào ?"}
+    ]
 
 # Render lịch sử
 for message in st.session_state.messages:
@@ -77,57 +70,28 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
 
 # Xử lý chat
-if prompt := st.chat_input("Nhập yêu cầu (VD: Phân tích cơ bản HPG, tin tức mới nhất về SSI...)"):
+if prompt := st.chat_input("Nhập mã chứng khoán (Ví dụ: HPG, SSI...)"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("AI đang quét dữ liệu thị trường và Internet..."):
+        with st.spinner("Đang quét dữ liệu..."):
             try:
-                # Trích xuất mã CK từ câu hỏi
-                import re
-                found_tickers = re.findall(r'\b[A-Z]{3}\b', prompt.upper())
-                ticker_to_search = found_tickers[0] if found_tickers else None
-                
-                live_price_info = ""
-                static_data_str = "Không tìm thấy dữ liệu nội bộ."
-                
-                if ticker_to_search:
-                    live_price = get_live_price(ticker_to_search)
-                    live_price_info = f"\nGiá Real-time của {ticker_to_search}: {live_price if live_price else 'Đang cập nhật'}"
-                    
-                    if not df.empty:
-                        essential_cols = ['Mã CK', 'Ngành', 'Giá', 'RS_1M', 'Tech_Score', 'Trạng Thái', 'P/E', 'ROE (%)', 'RSI_14']
-                        available_cols = [c for c in essential_cols if c in df.columns]
-                        static_info = df[df['Mã CK'] == ticker_to_search][available_cols]
-                        if not static_info.empty:
-                            static_data_str = static_info.to_string(index=False)
-                
                 client = genai.Client(api_key=API_KEY)
+                essential_cols = ['Mã CK', 'Ngành', 'Giá', 'RS_1M', 'Tech_Score', 'Trạng Thái', 'P/E', 'ROE (%)', 'RSI_14']
+                data_csv = df[essential_cols].to_csv(index=False) 
                 
-                sys_prompt = """
-                Bạn là Giám đốc phân tích AI tại Mirae Asset Vietnam.
-                NHIỆM VỤ CỦA BẠN:
-                1. Dùng Dữ liệu Nội bộ (RS_DATA) và Giá Real-time được cung cấp bên dưới để phân tích định lượng.
-                2. NẾU khách hàng hỏi về tin tức, báo cáo, hoặc vĩ mô, hãy tự động GỌI CÔNG CỤ `search_internet_for_news` để tra cứu thông tin Internet.
-                3. TUYỆT ĐỐI KHÔNG in lại bảng dữ liệu thô. Lồng ghép các con số vào bài phân tích.
-                4. Giọng điệu chuyên nghiệp, khách quan, súc tích.
-                """
+                sys_prompt = "Bạn là AI Analyst tại LINANCE. Trả lời bằng dữ liệu CSV,dữ liệu bên ngoài,Báo cáo phân tích các công ty,tra cứu gooogle về thị trường chứng khoán và dữ liệu real time, giọng điệu chuyên nghiệp."
+                full_prompt = f"{sys_prompt}\n\n📊 DỮ LIỆU:\n{data_csv}\n\nLỆNH: {prompt}"
                 
-                full_prompt = f"{sys_prompt}\n\n📊 DỮ LIỆU NỘI BỘ (RS_DATA):\n{static_data_str}\n\n⏱️ DỮ LIỆU REAL-TIME:{live_price_info}\n\n🗣️ YÊU CẦU: {prompt}"
-                
-                # BƯỚC QUYẾT ĐỊNH: Bơm Tool tự chế vào cho AI dùng
                 response = client.models.generate_content(
-                    model='gemini-2.5-flash', # Đưa về động cơ 2.5 Flash chuẩn mực
+                    model='gemini-3.1-flash-lite',
                     contents=full_prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.2, 
-                        tools=[search_internet_for_news] # 🔥 AI SẼ TỰ ĐỘNG DÙNG HÀM NÀY KHI CẦN TÌM TIN TỨC
-                    )
+                    config=types.GenerateContentConfig(temperature=0.1)
                 )
                 
                 st.markdown(response.text)
                 st.session_state.messages.append({"role": "assistant", "content": response.text})
             except Exception as e:
-                st.error(f"Lỗi hệ thống: {e}")
+                st.error(f"Lỗi: {e}")

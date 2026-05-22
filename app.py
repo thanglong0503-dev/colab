@@ -1,16 +1,15 @@
 import streamlit as st
 import pandas as pd
 import gspread
-from google.oauth2.service_account import Credentials # Dùng thư viện xịn của Google
+from google.oauth2.service_account import Credentials
 from google import genai
 from google.genai import types
+import json # VŨ KHÍ MỚI: BỘ GIẢI MÃ JSON
 
 # CẤU HÌNH TRANG WEB
 st.set_page_config(page_title="Fincept Terminal", page_icon="📊", layout="wide")
 
-# ==========================================
-# 1. LẤY CHÌA KHÓA TỪ KÉT SẮT (KHÔNG DÙNG FILE NỮA)
-# ==========================================
+# Lấy chìa khóa Gemini
 API_KEY = st.secrets["GEMINI_API_KEY"]
 
 @st.cache_data(ttl=3600)
@@ -20,14 +19,15 @@ def load_data():
         "https://www.googleapis.com/auth/drive"
     ]
     
-    # Lấy thông tin chứng chỉ từ Két sắt (Secrets) của Streamlit
-    creds_dict = st.secrets["gcp_service_account"]
+    # 1. Lôi nguyên cái cục JSON thô từ Két sắt ra
+    creds_json = st.secrets["GCP_CREDENTIALS"]
     
-    # Tạo quyền đăng nhập từ Két sắt
+    # 2. Dùng thư viện json tự động bóc tách nó thành định dạng chuẩn
+    creds_dict = json.loads(creds_json)
+    
+    # 3. Kết nối Google Sheets
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
-    
-    # Kéo dữ liệu từ file RS_DATA
     worksheet = client.open("RS_DATA").worksheet("RS_DATA")
     data = worksheet.get_all_records()
     return pd.DataFrame(data)
@@ -36,7 +36,7 @@ def load_data():
 df = load_data()
 
 # ==========================================
-# 2. GIAO DIỆN WEB VÀ BỘ LỌC
+# GIAO DIỆN WEB VÀ BỘ LỌC
 # ==========================================
 st.markdown("<h1 style='text-align: center; color: #58a6ff;'>📊 FINCEPT TERMINAL : AI DESK</h1>", unsafe_allow_html=True)
 st.markdown("---")

@@ -4,7 +4,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 from google import genai
 from google.genai import types
-import json # VŨ KHÍ MỚI: BỘ GIẢI MÃ JSON
 
 # CẤU HÌNH TRANG WEB
 st.set_page_config(page_title="Fincept Terminal", page_icon="📊", layout="wide")
@@ -19,13 +18,10 @@ def load_data():
         "https://www.googleapis.com/auth/drive"
     ]
     
-    # 1. Lôi nguyên cái cục JSON thô từ Két sắt ra
-    creds_json = st.secrets["GCP_CREDENTIALS"]
+    # Ép kiểu dữ liệu từ Két sắt (gcp_service_account) sang dạng Dictionary
+    creds_dict = dict(st.secrets["gcp_service_account"])
     
-    # 2. Dùng thư viện json tự động bóc tách nó thành định dạng chuẩn
-    creds_dict = json.loads(creds_json)
-    
-    # 3. Kết nối Google Sheets
+    # Kết nối Google Sheets
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
     worksheet = client.open("RS_DATA").worksheet("RS_DATA")

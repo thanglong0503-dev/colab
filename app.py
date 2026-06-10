@@ -92,7 +92,7 @@ with st.sidebar:
     st.markdown("### ⚙️ HỆ THỐNG")
     st.caption("Trạng thái: KẾT NỐI API BÌNH THƯỜNG")
     # Nút bấm quyền lực giúp Ngài ép hệ thống cập nhật Sheet mới ngay lập tức
-    if st.button("🔄 Quét lại Google Sheets"):
+    if st.button("🔄 Loading DATA"):
         st.cache_data.clear() # Xóa sạch trí nhớ cũ
         st.rerun() # Tải lại ứng dụng
 

@@ -215,7 +215,13 @@ def main():
         print(f"☁️ Đang đẩy {len(df_rs_up)} mã chất lượng lên kho dữ liệu nội bộ...")
         ws_rs = get_google_sheet("RS_DATA")
         ws_rs.clear()
-        ws_rs.update([df_rs_up.columns.values.tolist()] + df_rs_up.values.tolist())
+        
+        # BƯỚC QUYẾT ĐỊNH: Ép Google Sheets phải mở rộng đủ cột trước khi điền dữ liệu
+        if ws_rs.col_count < len(df_rs_up.columns):
+            ws_rs.add_cols(len(df_rs_up.columns) - ws_rs.col_count)
+            
+        # Đẩy dữ liệu lên sheet bắt đầu từ ô A1
+        ws_rs.update([df_rs_up.columns.values.tolist()] + df_rs_up.values.tolist(), 'A1')
         print("✅ HOÀN TẤT! Dữ liệu đã đổ bộ thành công lên Google Sheets.")
     else:
         print("❌ Lỗi: Không có dữ liệu đầu ra.")

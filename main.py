@@ -31,7 +31,8 @@ def process_ticker(ticker, industry, start_date, end_date):
     try:
         # 1. LẤY DỮ LIỆU HÀNH VI GIÁ TỪ VNSTOCK (Vẫn mượt)
         df = stock_historical_data(symbol=ticker, start_date=start_date, end_date=end_date, resolution='1D', type='stock')
-        if df is None or len(df) < 66: return None 
+        # Tăng số ngày tối thiểu lên 200 để có thể tính SMA200
+        if df is None or len(df) < 200: return None 
         
         close = df['close']
         high = df['high']
@@ -44,7 +45,10 @@ def process_ticker(ticker, industry, start_date, end_date):
         if avg_value < (MIN_LIQUIDITY * 1000) or close_price < MIN_PRICE: return None 
         if (volume.tail(20) == 0).sum() > 3: return None
 
-        # 2. CHẤM ĐIỂM KỸ THUẬT
+        # ==========================================
+        # 2. CHẤM ĐIỂM KỸ THUẬT (BẢN NÂNG CẤP)
+        # ==========================================
+        # --- Chỉ báo hiện có ---
         ma5 = close.rolling(5).mean().iloc[-1]
         ma20 = close.rolling(20).mean().iloc[-1]
         hhv10 = high.rolling(10).max().iloc[-1]
@@ -74,9 +78,47 @@ def process_ticker(ticker, industry, start_date, end_date):
         neg_flow = np.where(typical_price < typical_price.shift(1), raw_money_flow, 0)
         mfi_val = float((100 - (100 / (1 + (pd.Series(pos_flow).rolling(14).sum() / pd.Series(neg_flow).rolling(14).sum())))).iloc[-1])
 
+        # --- CHỈ BÁO BỔ SUNG: Xu hướng trung/dài hạn ---
+        sma50 = float(close.rolling(50).mean().iloc[-1])
+        sma200 = float(close.rolling(200).mean().iloc[-1])
+
+        # --- CHỈ BÁO BỔ SUNG: Bollinger Bands (20, 2) ---
+        std20 = close.rolling(20).std()
+        upper_band = float((close.rolling(20).mean() + 2 * std20).iloc[-1])
+        lower_band = float((close.rolling(20).mean() - 2 * std20).iloc[-1])
+
+        # --- CHỈ BÁO BỔ SUNG: Ichimoku Cloud (9, 26, 52) ---
+        # Tenkan-sen (Conversion Line): (9-period high + 9-period low)/2
+        nine_period_high = high.rolling(window=9).max()
+        nine_period_low = low.rolling(window=9).min()
+        tenkan_sen = float(((nine_period_high + nine_period_low) / 2).iloc[-1])
+        
+        # Kijun-sen (Base Line): (26-period high + 26-period low)/2
+        period26_high = high.rolling(window=26).max()
+        period26_low = low.rolling(window=26).min()
+        kijun_sen = float(((period26_high + period26_low) / 2).iloc[-1])
+        
+        # Senkou Span A (Leading Span A): (Conversion Line + Base Line)/2
+        senkou_span_a = float(((nine_period_high + nine_period_low) / 2 + (period26_high + period26_low) / 2) / 2).iloc[-1]
+        
+        # Senkou Span B (Leading Span B): (52-period high + 52-period low)/2
+        period52_high = high.rolling(window=52).max()
+        period52_low = low.rolling(window=52).min()
+        senkou_span_b = float(((period52_high + period52_low) / 2).iloc[-1])
+
+        # Xác định trạng thái so với mây Ichimoku
+        if close_price > senkou_span_a and close_price > senkou_span_b:
+            ichimoku_status = "Trên Mây"
+        elif close_price < senkou_span_a and close_price < senkou_span_b:
+            ichimoku_status = "Dưới Mây"
+        else:
+            ichimoku_status = "Trong Mây"
+
+        # Cập nhật điểm kỹ thuật
         score = 0
         score += 1 if close_price > ma5 else -1
         score += 1 if close_price > ma20 else -1
+        score += 1 if close_price > sma50 else -1 # Bổ sung điểm
         score += 1 if ma5 > ma20 else -1
         score += 1 if rsi_val > 50 else -1
         score += 1 if mfi_val > 50 else -1
@@ -84,17 +126,14 @@ def process_ticker(ticker, industry, start_date, end_date):
         score += 1 if k_val > d_val else -1
         score += 1 if close_price >= hhv10 else (-1 if close_price <= llv10 else 0)
         
-        tech_status = "KHẢ QUAN" if score >= 4 else ("TIÊU CỰC" if score <= -4 else "TRUNG TÍNH")
+        tech_status = "KHẢ QUAN" if score >= 5 else ("TIÊU CỰC" if score <= -5 else "TRUNG TÍNH")
 
         # ==========================================
         # 3. LẤY DỮ LIỆU CƠ BẢN TỪ YAHOO FINANCE (QUỐC TẾ)
         # ==========================================
         try:
-            # Gắn đuôi .VN để Yahoo hiểu đây là cổ phiếu Việt Nam
             yf_ticker = yf.Ticker(f"{ticker}.VN")
             info = yf_ticker.info
-            
-            # Yahoo trả về marketCap bằng VND (rất lớn), ta chia cho 1 tỷ để ra Tỷ VNĐ
             market_cap = round(info.get('marketCap', 0) / 1e9, 1) 
             pe = round(info.get('trailingPE', 0), 2)
             pb = round(info.get('priceToBook', 0), 2)
@@ -128,7 +167,14 @@ def process_ticker(ticker, industry, start_date, end_date):
             "Volume": float(volume.iloc[-1]),
             "RSI_14": round(rsi_val, 2),
             "MFI_14": round(mfi_val, 2),
-            "MACD_Hist": round(macd_val - signal_val, 3)
+            "MACD_Hist": round(macd_val - signal_val, 3),
+            "SMA_50": round(sma50, 2),
+            "SMA_200": round(sma200, 2),
+            "BB_Upper": round(upper_band, 2),
+            "BB_Lower": round(lower_band, 2),
+            "Ichi_Trạng_Thái": ichimoku_status,
+            "Tenkan": round(tenkan_sen, 2),
+            "Kijun": round(kijun_sen, 2)
         }
     except Exception as e:
         return None
@@ -139,7 +185,8 @@ def main():
     tickers_list = df_companies[['ticker', 'industry']].values.tolist()
     
     end_date = datetime.now().strftime("%Y-%m-%d")
-    start_date = (datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")
+    # Thay đổi lấy lịch sử lùi lại 300 ngày để đảm bảo đủ dữ liệu tính SMA200 (khoảng 200 ngày giao dịch)
+    start_date = (datetime.now() - timedelta(days=300)).strftime("%Y-%m-%d") 
     
     raw_results = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -147,7 +194,7 @@ def main():
         
         for future in tqdm(as_completed(futures), total=len(tickers_list)):
             try:
-                res = future.result(timeout=30) # Yahoo đôi khi hơi chậm, nới lỏng ra 30s
+                res = future.result(timeout=30) 
                 if res: raw_results.append(res)
             except concurrent.futures.TimeoutError:
                 continue
@@ -160,9 +207,11 @@ def main():
         df_final['RS_1M'] = (df_final['RS_1M'].rank(pct=True) * 99).astype(int) + 1
         df_final['RS_3M'] = (df_final['RS_3M'].rank(pct=True) * 99).astype(int) + 1
         
+        # Bổ sung các cột chỉ báo mới vào df đẩy lên Google Sheets
         final_columns = ['Mã CK', 'Ngành', 'RS_1M', 'RS_3M', 'Tech_Score', 'Trạng Thái', 'Thanh_Khoản_Tỷ', 'Giá', 
                          'Vốn Hóa', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ', 
-                         'Open', 'High', 'Low', 'Volume', 'RSI_14', 'MFI_14', 'MACD_Hist']
+                         'Open', 'High', 'Low', 'Volume', 'RSI_14', 'MFI_14', 'MACD_Hist',
+                         'SMA_50', 'SMA_200', 'BB_Upper', 'BB_Lower', 'Ichi_Trạng_Thái', 'Tenkan', 'Kijun']
         
         df_rs_up = df_final[final_columns].fillna("")
         

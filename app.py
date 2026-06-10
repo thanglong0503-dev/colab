@@ -25,7 +25,7 @@ st.markdown("""
     /* Header Chuyên Nghiệp - Tối Giản */
     .main-header { 
         padding: 30px 20px; 
-        margin-bottom: 40px; 
+        margin-bottom: 20px; 
         text-align: center;
         border-bottom: 1px solid var(--glass-border);
         background: transparent;
@@ -36,10 +36,9 @@ st.markdown("""
         letter-spacing: 2px;
         margin-bottom: 8px;
         font-size: 32px !important;
-        /* Chữ tự động sáng/tối theo theme của Streamlit */
     }
     .main-header p {
-        font-family: "Courier New", Courier, monospace; /* Font code công nghệ */
+        font-family: "Courier New", Courier, monospace; 
         font-weight: 600;
         letter-spacing: 3px;
         text-transform: uppercase;
@@ -53,7 +52,7 @@ st.markdown("""
         border-radius: var(--ios-radius); 
         border: 1px solid var(--glass-border);
         padding: 15px;
-        backdrop-filter: blur(12px); /* Hiệu ứng làm mờ nền của Apple */
+        backdrop-filter: blur(12px); 
         -webkit-backdrop-filter: blur(12px);
         margin-bottom: 15px;
     }
@@ -86,12 +85,23 @@ st.markdown("""
 # Header
 st.markdown("<div class='main-header'><h1>LINANCE TERMINAL</h1><p>SYS.CORE // AI QUANTITATIVE ANALYSIS</p></div>", unsafe_allow_html=True)
 
+# ==========================================
+# SIDEBAR CONTROL PANEL (BẢNG ĐIỀU KHIỂN BÊN HÔNG)
+# ==========================================
+with st.sidebar:
+    st.markdown("### ⚙️ HỆ THỐNG")
+    st.caption("Trạng thái: KẾT NỐI API BÌNH THƯỜNG")
+    # Nút bấm quyền lực giúp Ngài ép hệ thống cập nhật Sheet mới ngay lập tức
+    if st.button("🔄 Quét lại Google Sheets"):
+        st.cache_data.clear() # Xóa sạch trí nhớ cũ
+        st.rerun() # Tải lại ứng dụng
+
 API_KEY = st.secrets["GEMINI_API_KEY"]
 
 # ==========================================
 # 1. HÀM TẢI DỮ LIỆU TỰ ĐỘNG QUÉT TOÀN BỘ CÁC SHEET
 # ==========================================
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=600) # Đã giảm xuống 10 phút để cập nhật nhanh hơn
 def load_all_sheets():
     try:
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -106,6 +116,7 @@ def load_all_sheets():
         # Vòng lặp quét tất cả các tab
         for ws in spreadsheet.worksheets():
             records = ws.get_all_records()
+            # CẢNH BÁO CHO NGÀI: Nếu Sheet trống (chưa có dòng tiêu đề), hàm này sẽ bỏ qua.
             if records:
                 all_data[ws.title] = pd.DataFrame(records)
         return all_data
@@ -166,6 +177,9 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                     else:
                         data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
 
+                # Hiển thị cho sếp biết AI đang đọc những sheet nào
+                st.caption(f"🧠 Dữ liệu nội bộ đã nạp: {', '.join(dict_dfs.keys())}")
+
                 # 3.2. Khởi tạo Client
                 client = genai.Client(api_key=API_KEY)
                 
@@ -173,7 +187,7 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                 sys_prompt = """
                 Bạn là AI Analyst cấp cao tại LINANCE.
                 NGUYÊN TẮC HOẠT ĐỘNG:
-                1. ƯU TIÊN SỐ 1: Bám sát DỮ LIỆU NỘI BỘ (RS_DATA, INDUSTRY_DATA...) được cung cấp bên dưới để phân tích định lượng.
+                1. ƯU TIÊN SỐ 1: Bám sát DỮ LIỆU NỘI BỘ (RS_DATA, INDUSTRY_DATA, REPORTS_DB...) được cung cấp bên dưới để phân tích định lượng.
                 2. TÌM KIẾM MỞ RỘNG: NẾU dữ liệu nội bộ không đủ trả lời, HÃY TỰ ĐỘNG GỌI CÔNG CỤ `search_internet`.
                 3. NGUỒN: Khi sử dụng thông tin từ Internet, BẮT BUỘC trích dẫn link nguồn.
                 4. CẤM: Không in lại bảng dữ liệu CSV thô.

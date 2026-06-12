@@ -4,7 +4,63 @@ import gspread
 from google.oauth2.service_account import Credentials
 from google import genai
 from google.genai import types
+# ==========================================
+# GIAO DIỆN: THẺ BÀI RPG
+# ==========================================
+def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None):
+    # 1. TÌM DỮ LIỆU
+    stock_rs = df_rs[df_rs['Mã CK'] == ticker]
+    if stock_rs.empty:
+        st.warning(f"Chiến binh {ticker} chưa xuất hiện trong Database.")
+        return
+        
+    data = stock_rs.iloc[0]
+    
+    # 2. CHỈ SỐ GAME
+    atk_score = int(data.get('RS_1M', 50))
+    mp_score = int(data.get('MFI_14', 50))
+    tech_score = data.get('Tech_Score', 0)
+    
+    def_score = 50
+    if df_ta is not None and not df_ta.empty and ticker in df_ta['Mã CK'].values:
+        ta_data = df_ta[df_ta['Mã CK'] == ticker].iloc[0]
+        if "TRÊN Mây" in str(ta_data.get('Trạng Thái Mây', '')): def_score += 30
+        elif "DƯỚI Mây" in str(ta_data.get('Trạng Thái Mây', '')): def_score -= 20
+    if float(data.get('ROE (%)', 0)) > 15: def_score += 20
+    def_score = min(max(def_score, 0), 100)
 
+    # Hệ Phái & Tier
+    if tech_score >= 6: tier, t_col = "S-TIER", "#FFD700"
+    elif tech_score >= 3: tier, t_col = "A-TIER", "#00FF00"
+    elif tech_score >= 0: tier, t_col = "B-TIER", "#0A84FF"
+    else: tier, t_col = "C-TIER", "#FF3A3A"
+
+    industry = str(data.get('Ngành', ''))
+    if "Ngân hàng" in industry: rpg_class = "🛡️ TANKER"
+    elif "Chứng khoán" in industry: rpg_class = "⚔️ ASSASSIN"
+    elif "Công nghệ" in industry: rpg_class = "🧙‍♂️ MAGE"
+    elif "Bất động sản" in industry: rpg_class = "🪓 BERSERKER"
+    else: rpg_class = "🏹 RANGER"
+
+    # 3. VẼ UI
+    st.markdown(f"""
+    <div style="background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 18px; padding: 20px; margin-bottom: 20px;">
+        <h3 style="margin:0; color:#FFF;">[{ticker}] - {rpg_class}</h3>
+        <p style="color:{t_col}; font-weight:bold; font-size:18px;">♦ {tier}</p>
+        <hr style="border-color: rgba(255,255,255,0.1); margin: 10px 0;">
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(f"**⚔️ ATK (Sát thương):** {atk_score}")
+        st.progress(atk_score / 100)
+        st.markdown(f"**🛡️ DEF (Hỗ trợ/Giáp):** {def_score}")
+        st.progress(def_score / 100)
+    with col2:
+        st.markdown(f"**💧 MP (Mana/Dòng tiền):** {mp_score}")
+        st.progress(mp_score / 100)
+        st.markdown(f"**❤️ HP (Giá hiện tại):** {data.get('Giá', 0):,.0f} ₫")
 # ==========================================
 # CẤU HÌNH GIAO DIỆN (AI CYBER & iOS STYLE)
 # ==========================================
@@ -97,7 +153,18 @@ with st.sidebar:
         st.rerun() # Tải lại ứng dụng
 
 API_KEY = st.secrets["GEMINI_API_KEY"]
-
+# === TÍNH NĂNG SOI THẺ BÀI RPG ===
+    st.markdown("---")
+    st.markdown("### 🎮 SOI CHỈ SỐ CHIẾN BINH")
+    rpg_ticker = st.text_input("Nhập Mã CK (VD: HPG):", "").upper()
+    
+    if rpg_ticker:
+        # Lấy dữ liệu từ bộ nhớ dict_dfs của Ngài
+        df_rs = dict_dfs.get("RS_DATA", pd.DataFrame())
+        df_ta = dict_dfs.get("TA_DATA", pd.DataFrame())
+        
+        if not df_rs.empty:
+            render_rpg_card(rpg_ticker, df_rs, df_ta)
 # ==========================================
 # 1. HÀM TẢI DỮ LIỆU TỰ ĐỘNG QUÉT TOÀN BỘ CÁC SHEET
 # ==========================================

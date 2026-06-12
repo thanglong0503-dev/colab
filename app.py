@@ -144,7 +144,27 @@ def search_internet(query: str) -> str:
         return "\n".join(formatted_results)
     except Exception as e:
         return f"SYSTEM ERROR (NETWORK): {e}"
-
+# ==========================================
+# 2.5. KỸ NĂNG: RADAR REAL-TIME (YAHOO FINANCE)
+# ==========================================
+def get_live_stock_data(ticker: str) -> str:
+    """Công cụ BẮT BUỘC dùng để tra cứu GIÁ REAL-TIME ngay trong phiên của cổ phiếu Việt Nam."""
+    import yfinance as yf
+    try:
+        ticker = ticker.strip().upper()
+        yf_ticker = f"{ticker}.VN" if not ticker.endswith(".VN") else ticker
+        stock = yf.Ticker(yf_ticker)
+        
+        # Lấy giá realtime qua hàm fast_info (Nhanh và ít bị lỗi hơn .info)
+        current_price = stock.fast_info['lastPrice']
+        
+        # Nhân tỷ lệ nếu Yahoo trả về giá rút gọn
+        if current_price < 1000:
+            current_price *= 1000
+            
+        return f"[SYSTEM REAL-TIME UPDATE] Giá của {ticker} NGAY LÚC NÀY là: {current_price:,.0f} VNĐ."
+    except Exception as e:
+        return f"Hệ thống không thể lấy giá realtime cho {ticker} lúc này. Lỗi: {e}"
 # ==========================================
 # 3. TRUNG TÂM XỬ LÝ CHATBOT AI AGENT
 # ==========================================
@@ -197,51 +217,65 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                 sys_prompt = """
                 Bạn là AI Analyst cấp cao tại LINANCE.
                 NGUYÊN TẮC HOẠT ĐỘNG:
-                1. ƯU TIÊN SỐ 1: Bám sát DỮ LIỆU NỘI BỘ (RS_DATA, TA_DATA...) được cung cấp bên dưới để phân tích định lượng. Tuyệt đối dùng giá từ dữ liệu nội bộ.
-                2. KỸ NĂNG PHÂN TÍCH KỸ THUẬT (ICHIMOKU): Khi được hỏi về xu hướng, điểm mua/bán hoặc đánh giá kỹ thuật, bạn BẮT BUỘC phải truy xuất bảng TA_DATA. Hãy phân tích rõ vị thế Giá so với Mây Kumo, sự giao cắt của Tenkan/Kijun và kết hợp với điểm Tech_Score trong RS_DATA để đưa ra kết luận sắc bén, súc tích.
-                3. TÌM KIẾM MỞ RỘNG: NẾU dữ liệu nội bộ không đủ trả lời, HÃY TỰ ĐỘNG GỌI CÔNG CỤ `search_internet`.
-                4. NGUỒN: Khi sử dụng thông tin từ Internet, BẮT BUỘC trích dẫn link nguồn.
-                5. CẤM: Không in lại bảng dữ liệu CSV thô.
-                6. MIỄN TRỪ TRÁCH NHIỆM: Ở CUỐI MỌI CÂU TRẢ LỜI, chèn chính xác: "*Miễn trừ trách nhiệm: Thông tin chỉ mang tính chất tham khảo dựa trên dữ liệu hiện có và không phải là lời khuyên đầu tư.*"
+                1. DỮ LIỆU NỀN TẢNG: Bảng RS_DATA và TA_DATA cung cấp bên dưới là DỮ LIỆU CHỐT PHIÊN HÔM QUA (dùng để xem xu hướng, RS, Ichimoku, Tech Score).
+                2. BẮT BUỘC KIỂM TRA GIÁ REAL-TIME: Khi người dùng hỏi về diễn biến hôm nay, điểm mua/bán hiện tại của một mã cổ phiếu cụ thể, bạn PHẢI gọi công cụ `get_live_stock_data` để lấy giá ngay lập tức, sau đó so sánh mức giá Real-time này với dữ liệu ngày hôm qua để phân tích sự đột biến.
+                3. TÌM KIẾM TIN TỨC: Gọi `search_internet` nếu cần tìm tin nóng giải thích cho biến động giá.
+                4. CẤM: Không in lại bảng dữ liệu CSV thô.
+                5. MIỄN TRỪ TRÁCH NHIỆM: Ở CUỐI MỌI CÂU TRẢ LỜI, chèn chính xác: "*Miễn trừ trách nhiệm: Thông tin chỉ mang tính chất tham khảo dựa trên dữ liệu hiện có và không phải là lời khuyên đầu tư.*"
                 """
                 
                 full_prompt = f"{sys_prompt}\n\n📊 KHO DỮ LIỆU NỘI BỘ:\n{data_context}\n\nTRUY VẤN: {prompt}"
                 
-                # 3.4. Gọi mô hình
+                # 3.4. Gọi mô hình (Nạp thêm Tool mới vào đây)
                 response = client.models.generate_content(
                     model='gemini-3.1-flash-lite', 
                     contents=full_prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.2,
-                        tools=[search_internet]
+                        tools=[search_internet, get_live_stock_data] # Đã nạp 2 thanh gươm!
                     )
                 )
                 
-                # 3.5. Xử lý Function Calling
+                # 3.5. Xử lý Function Calling Đa Nhiệm
                 if response.function_calls:
+                    # Tạo mảng lưu trữ cuộc hội thoại
+                    messages_for_ai = [
+                        types.Content(role="user", parts=[types.Part.from_text(full_prompt)]),
+                        response.candidates[0].content
+                    ]
+                    
+                    tool_response_parts = []
+                    
+                    # Quét xem AI muốn dùng vũ khí nào
                     for tool_call in response.function_calls:
+                        result_text = ""
+                        
                         if tool_call.name == "search_internet":
                             query = tool_call.args.get("query", prompt)
-                            st.caption(f"SYSTEM OVERRIDE: Executing web search for '{query}'...")
+                            st.caption(f"🌐 Đang quét mạng Internet: '{query}'...")
+                            result_text = search_internet(query)
                             
-                            internet_result = search_internet(query)
+                        elif tool_call.name == "get_live_stock_data":
+                            ticker = tool_call.args.get("ticker", "")
+                            st.caption(f"⚡ Đang dò sóng Radar Real-time mã: {ticker}...")
+                            result_text = get_live_stock_data(ticker)
                             
-                            messages_for_ai = [
-                                types.Content(role="user", parts=[types.Part.from_text(full_prompt)]),
-                                response.candidates[0].content,
-                                types.Content(role="user", parts=[
-                                    types.Part.from_function_response(
-                                        name=tool_call.name, 
-                                        response={"result": internet_result}
-                                    )
-                                ])
-                            ]
-                            
-                            response = client.models.generate_content(
-                                model='gemini-3.1-flash-lite',
-                                contents=messages_for_ai,
-                                config=types.GenerateContentConfig(temperature=0.2)
+                        # Đóng gói kết quả của công cụ
+                        tool_response_parts.append(
+                            types.Part.from_function_response(
+                                name=tool_call.name, 
+                                response={"result": result_text}
                             )
+                        )
+                    
+                    # Gửi kết quả từ các công cụ về cho AI phân tích tiếp
+                    messages_for_ai.append(types.Content(role="user", parts=tool_response_parts))
+                    
+                    response = client.models.generate_content(
+                        model='gemini-3.1-flash-lite',
+                        contents=messages_for_ai,
+                        config=types.GenerateContentConfig(temperature=0.2)
+                    )
                 
                 # 3.6. Hiển thị kết quả
                 st.markdown(response.text)

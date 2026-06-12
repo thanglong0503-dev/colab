@@ -251,15 +251,24 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                         # 1. Tạo một bản sao để rửa dữ liệu (tránh làm hỏng DataFrame gốc)
                         df_clean = df_sheet.copy()
                         
-                        # 2. Xử lý các cột lỗi định dạng dấu phẩy ở những chỉ số tài chính cơ bản
+                        # Hàm tự động sửa lỗi dấu phẩy và tỷ lệ ngáo
+                        def auto_fix_ai_ratio(val):
+                            try:
+                                if isinstance(val, str): 
+                                    val = val.replace(',', '.')
+                                v = float(val)
+                                # Nếu số lớn bất thường (trên 100), lùi dấu thập phân lại cho đến khi hợp lý
+                                while v > 100:
+                                    v /= 10
+                                return round(v, 2)
+                            except:
+                                return 0.0
+
+                        # 2. Xử lý các cột lỗi định dạng ở những chỉ số tài chính cơ bản
                         cols_to_fix = ['P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ', 'Thanh_Khoản_Tỷ']
                         for col in cols_to_fix:
                             if col in df_clean.columns:
-                                # Chuyển thành chuỗi, thay dấu phẩy thành chấm, ép về kiểu số float
-                                df_clean[col] = df_clean[col].astype(str).str.replace(',', '.', regex=False)
-                                df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
-                                # Lùi dấu thập phân nếu số bị giãn ra hàng nghìn do lỗi nhập liệu cũ
-                                df_clean[col] = df_clean[col].apply(lambda x: x / 1000 if x > 100 else x)
+                                df_clean[col] = df_clean[col].apply(auto_fix_ai_ratio)
                         
                         # 3. Lọc và ép thành Text gửi cho AI
                         if sheet_name == "RS_DATA":

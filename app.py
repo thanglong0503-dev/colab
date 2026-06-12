@@ -32,6 +32,9 @@ def load_all_sheets():
         st.error(f"SYSTEM ERROR (DATA_LOAD): {e}")
         return {}
 
+# ==========================================
+# 2. HÀM GIAO DIỆN HỒ SƠ SỨC KHỎE ĐÃ ĐỒNG BỘ ĐỊNH DẠNG
+# ==========================================
 def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None):
     stock_rs = df_rs[df_rs['Mã CK'] == ticker]
     if stock_rs.empty:
@@ -40,13 +43,31 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         
     data = stock_rs.iloc[0].to_dict()
     
-    # Lưu trữ giá trị nguyên bản từ Google Sheets để hiển thị trực tiếp
-    raw_pe = data.get('P/E', 'N/A')
-    raw_pb = data.get('P/B', 'N/A')
-    raw_roe = data.get('ROE (%)', 'N/A')
-    raw_debt = data.get('Nợ/Vốn Chủ', 'N/A')
-    raw_price = data.get('Giá', 'N/A')
+    # Hàm ép số quốc tế về chuẩn hiển thị Việt Nam (Dấu phẩy)
+    def format_vn(val):
+        try:
+            # Nếu là chuỗi, có thể do lỗi định dạng cũ, cứ trả về nguyên gốc
+            if isinstance(val, str): return val
+            # Nếu là số nguyên, không cần dấu phẩy
+            if float(val).is_integer(): return str(int(val))
+            # Ép float thành string, thay dấu chấm bằng phẩy
+            return str(round(float(val), 2)).replace('.', ',')
+        except:
+            return "N/A"
+
+    # Định dạng lại các chỉ số cơ bản để hiển thị lên UI
+    display_pe = format_vn(data.get('P/E', 'N/A'))
+    display_pb = format_vn(data.get('P/B', 'N/A'))
+    display_roe = format_vn(data.get('ROE (%)', 'N/A'))
     
+    # Định dạng giá tiền có dấu chấm ngăn cách hàng nghìn
+    try:
+        current_price = float(data.get('Giá', 0))
+        display_price = f"{current_price:,.0f} VNĐ".replace(',', '.')
+    except:
+        display_price = "N/A"
+    
+    # Lấy dữ liệu an toàn để tính điểm thanh công cụ
     atk_score = int(data.get('RS_1M', 50))
     mp_score = int(data.get('MFI_14', 50))
     tech_score = data.get('Tech_Score', 0)
@@ -57,29 +78,19 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         if "TRÊN Mây" in str(ta_data.get('Trạng Thái Mây', '')): def_score += 30
         elif "DƯỚI Mây" in str(ta_data.get('Trạng Thái Mây', '')): def_score -= 20
         
-    try:
-        if float(str(raw_roe).replace(',', '.')) > 15: def_score += 20
-    except:
-        pass
+    if float(data.get('ROE (%)', 0)) > 15: def_score += 20
 
-    # Tính toán chỉ số định giá nội bộ (không ảnh hưởng đến văn bản hiển thị)
     int_score = 50
     try:
-        pe_f = float(str(raw_pe).replace(',', '.'))
+        pe_f = float(data.get('P/E', 0))
         if 0 < pe_f < 15: int_score += 20
         elif pe_f > 25 or pe_f < 0: int_score -= 20
-    except:
-        pass
-
-    try:
-        pb_f = float(str(raw_pb).replace(',', '.'))
+        
+        pb_f = float(data.get('P/B', 0))
         if 0 < pb_f < 1.5: int_score += 20
         elif pb_f > 3.0: int_score -= 20
-    except:
-        pass
-
-    try:
-        debt_f = float(str(raw_debt).replace(',', '.'))
+        
+        debt_f = float(data.get('Nợ/Vốn Chủ', 0))
         if 0 <= debt_f < 1.0: int_score += 10
         elif debt_f > 2.0: int_score -= 10
     except:
@@ -118,13 +129,7 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         st.markdown(f"**MP (Mana - Dòng tiền):** {mp_score}")
         st.progress(mp_score / 100)
         
-        try:
-            price_val = float(str(raw_price).replace(',', '.'))
-            price_display = f"{price_val:,.0f} VNĐ"
-        except:
-            price_display = str(raw_price)
-            
-        st.markdown(f"**GIÁ HIỆN TẠI:** {price_display}")
+        st.markdown(f"**GIÁ HIỆN TẠI:** {display_price}")
 
     with col2:
         st.markdown(f"**DEF (Phòng thủ - Xu hướng):** {def_score}")
@@ -133,7 +138,7 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         st.markdown(f"**INT (Trí tuệ - Định giá):** {int_score}")
         st.progress(int_score / 100)
         
-        st.markdown(f"**THÔNG SỐ:** P/E: {raw_pe} | P/B: {raw_pb} | ROE: {raw_roe}%")
+        st.markdown(f"**THÔNG SỐ:** P/E: {display_pe} | P/B: {display_pb} | ROE: {display_roe}%")
         
     st.markdown("</div>", unsafe_allow_html=True)
 

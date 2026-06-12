@@ -24,7 +24,8 @@ def load_all_sheets():
         spreadsheet = client.open("RS_DATA") 
         all_data = {}
         for ws in spreadsheet.worksheets():
-            records = ws.get_all_records()
+            # Lệnh UNFORMATTED_VALUE ép Google trả về đúng số thực (VD: 138.32), ngăn chặn việc xóa dấu phẩy
+            records = ws.get_all_records(value_render_option='UNFORMATTED_VALUE')
             if records:
                 all_data[ws.title] = pd.DataFrame(records)
         return all_data
@@ -43,31 +44,28 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         
     data = stock_rs.iloc[0].to_dict()
     
-    # Hàm ép số quốc tế về chuẩn hiển thị Việt Nam (Dấu phẩy)
+    # Hàm xử lý chuẩn: Nhận số thực (138.32) và hiển thị định dạng Việt Nam (138,32)
     def format_vn(val):
         try:
-            # Nếu là chuỗi, có thể do lỗi định dạng cũ, cứ trả về nguyên gốc
-            if isinstance(val, str): return val
-            # Nếu là số nguyên, không cần dấu phẩy
-            if float(val).is_integer(): return str(int(val))
-            # Ép float thành string, thay dấu chấm bằng phẩy
-            return str(round(float(val), 2)).replace('.', ',')
+            if pd.isna(val): return "N/A"
+            v = float(val)
+            if v.is_integer(): return str(int(v))
+            return f"{v:.2f}".replace('.', ',')
         except:
-            return "N/A"
+            return str(val)
 
-    # Định dạng lại các chỉ số cơ bản để hiển thị lên UI
+    # Định dạng các chỉ số hiển thị UI
     display_pe = format_vn(data.get('P/E', 'N/A'))
     display_pb = format_vn(data.get('P/B', 'N/A'))
     display_roe = format_vn(data.get('ROE (%)', 'N/A'))
     
-    # Định dạng giá tiền có dấu chấm ngăn cách hàng nghìn
     try:
         current_price = float(data.get('Giá', 0))
         display_price = f"{current_price:,.0f} VNĐ".replace(',', '.')
     except:
         display_price = "N/A"
     
-    # Lấy dữ liệu an toàn để tính điểm thanh công cụ
+    # Dữ liệu tính toán thanh tiến độ vẫn an toàn do giữ nguyên dạng float gốc
     atk_score = int(data.get('RS_1M', 50))
     mp_score = int(data.get('MFI_14', 50))
     tech_score = data.get('Tech_Score', 0)
@@ -78,7 +76,9 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         if "TRÊN Mây" in str(ta_data.get('Trạng Thái Mây', '')): def_score += 30
         elif "DƯỚI Mây" in str(ta_data.get('Trạng Thái Mây', '')): def_score -= 20
         
-    if float(data.get('ROE (%)', 0)) > 15: def_score += 20
+    try:
+        if float(data.get('ROE (%)', 0)) > 15: def_score += 20
+    except: pass
 
     int_score = 50
     try:
@@ -93,8 +93,7 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         debt_f = float(data.get('Nợ/Vốn Chủ', 0))
         if 0 <= debt_f < 1.0: int_score += 10
         elif debt_f > 2.0: int_score -= 10
-    except:
-        pass
+    except: pass
 
     atk_score = min(max(atk_score, 0), 100)
     mp_score = min(max(mp_score, 0), 100)

@@ -40,17 +40,22 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         
     data = stock_rs.iloc[0].to_dict()
     
+    # Lấy dữ liệu nguyên bản
     atk_score = int(data.get('RS_1M', 50))
     mp_score = int(data.get('MFI_14', 50))
     tech_score = data.get('Tech_Score', 0)
-    
     def_score = 50
+    
     if df_ta is not None and not df_ta.empty and ticker in df_ta['Mã CK'].values:
         ta_data = df_ta[df_ta['Mã CK'] == ticker].iloc[0].to_dict()
         if "TRÊN Mây" in str(ta_data.get('Trạng Thái Mây', '')): def_score += 30
         elif "DƯỚI Mây" in str(ta_data.get('Trạng Thái Mây', '')): def_score -= 20
         
     if float(data.get('ROE (%)', 0)) > 15: def_score += 20
+    
+    # CHỐT CHẶN AN TOÀN: Ép mọi giá trị về biên độ 0 - 100
+    atk_score = min(max(atk_score, 0), 100)
+    mp_score = min(max(mp_score, 0), 100)
     def_score = min(max(def_score, 0), 100)
 
     if tech_score >= 6: tier, t_col = "S-TIER", "#FFD700"

@@ -107,6 +107,41 @@ def process_ticker(ticker, industry, start_date, end_date):
         # 4. TÍNH SỨC MẠNH GIÁ (MOMENTUM)
         perf_1m = (close_price - close.iloc[-22]) / close.iloc[-22]
         perf_3m = (close_price - close.iloc[-66]) / close.iloc[-66]
+        # ==========================================
+        # 5. TÍNH TOÁN ICHIMOKU KINKO HYO
+        # ==========================================
+        high_9 = high.rolling(window=9).max()
+        low_9 = low.rolling(window=9).min()
+        tenkan_sen = (high_9 + low_9) / 2
+
+        high_26 = high.rolling(window=26).max()
+        low_26 = low.rolling(window=26).min()
+        kijun_sen = (high_26 + low_26) / 2
+
+        senkou_span_a = ((tenkan_sen + kijun_sen) / 2).shift(26)
+        
+        high_52 = high.rolling(window=52).max()
+        low_52 = low.rolling(window=52).min()
+        senkou_span_b = ((high_52 + low_52) / 2).shift(26)
+
+        # Trích xuất giá trị tại cây nến cuối cùng
+        cur_tenkan = float(tenkan_sen.iloc[-1]) if not pd.isna(tenkan_sen.iloc[-1]) else 0.0
+        cur_kijun = float(kijun_sen.iloc[-1]) if not pd.isna(kijun_sen.iloc[-1]) else 0.0
+        cur_senkou_a = float(senkou_span_a.iloc[-1]) if not pd.isna(senkou_span_a.iloc[-1]) else 0.0
+        cur_senkou_b = float(senkou_span_b.iloc[-1]) if not pd.isna(senkou_span_b.iloc[-1]) else 0.0
+
+        max_cloud = max(cur_senkou_a, cur_senkou_b)
+        min_cloud = min(cur_senkou_a, cur_senkou_b)
+
+        # Dịch trạng thái mây
+        if close_price > max_cloud: cloud_status = "TRÊN Mây (Tích cực)"
+        elif close_price < min_cloud: cloud_status = "DƯỚI Mây (Tiêu cực)"
+        else: cloud_status = "TRONG Mây (Đi ngang)"
+
+        # Dịch tín hiệu cắt
+        if cur_tenkan > cur_kijun: kumo_signal = "MUA MẠNH" if close_price > max_cloud else "MUA PHỤC HỒI"
+        elif cur_tenkan < cur_kijun: kumo_signal = "BÁN MẠNH" if close_price < min_cloud else "BÁN CHỐT LỜI"
+        else: kumo_signal = "LƯỠNG LỰ"
 
         return {
             "Mã CK": ticker,
@@ -128,7 +163,14 @@ def process_ticker(ticker, industry, start_date, end_date):
             "Volume": float(volume.iloc[-1]),
             "RSI_14": round(rsi_val, 2),
             "MFI_14": round(mfi_val, 2),
-            "MACD_Hist": round(macd_val - signal_val, 3)
+            "MACD_Hist": round(macd_val - signal_val, 3),
+            # --- CÁC CỘT MỚI CHO TA_DATA ---
+            "Tenkan_sen": round(cur_tenkan, 2),
+            "Kijun_sen": round(cur_kijun, 2),
+            "Senkou_A": round(cur_senkou_a, 2),
+            "Senkou_B": round(cur_senkou_b, 2),
+            "Trạng Thái Mây": cloud_status,
+            "Tín Hiệu Kumo": kumo_signal
         }
     except Exception as e:
         return None
@@ -160,17 +202,27 @@ def main():
         df_final['RS_1M'] = (df_final['RS_1M'].rank(pct=True) * 99).astype(int) + 1
         df_final['RS_3M'] = (df_final['RS_3M'].rank(pct=True) * 99).astype(int) + 1
         
-        final_columns = ['Mã CK', 'Ngành', 'RS_1M', 'RS_3M', 'Tech_Score', 'Trạng Thái', 'Thanh_Khoản_Tỷ', 'Giá', 
-                         'Vốn Hóa', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ', 
-                         'Open', 'High', 'Low', 'Volume', 'RSI_14', 'MFI_14', 'MACD_Hist']
+        # 1. LỌC CỘT CHO RS_DATA
+        final_rs_columns = ['Mã CK', 'Ngành', 'RS_1M', 'RS_3M', 'Tech_Score', 'Trạng Thái', 'Thanh_Khoản_Tỷ', 'Giá', 
+                            'Vốn Hóa', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ', 
+                            'Open', 'High', 'Low', 'Volume', 'RSI_14', 'MFI_14', 'MACD_Hist']
+        df_rs_up = df_final[final_rs_columns].fillna("")
         
-        df_rs_up = df_final[final_columns].fillna("")
+        # 2. LỌC CỘT CHO TA_DATA (Phân tích kỹ thuật)
+        final_ta_columns = ['Mã CK', 'Giá', 'Tenkan_sen', 'Kijun_sen', 'Senkou_A', 'Senkou_B', 'Trạng Thái Mây', 'Tín Hiệu Kumo']
+        df_ta_up = df_final[final_ta_columns].fillna("")
         
-        print(f"☁️ Đang đẩy {len(df_rs_up)} mã chất lượng lên kho dữ liệu nội bộ...")
+        print(f"☁️ Đang đẩy {len(df_rs_up)} mã lên RS_DATA...")
         ws_rs = get_google_sheet("RS_DATA")
         ws_rs.clear()
         ws_rs.update([df_rs_up.columns.values.tolist()] + df_rs_up.values.tolist())
-        print("✅ HOÀN TẤT! Dữ liệu đã đổ bộ thành công lên Google Sheets.")
+        
+        print(f"☁️ Đang đẩy {len(df_ta_up)} mã lên TA_DATA...")
+        ws_ta = get_google_sheet("TA_DATA")
+        ws_ta.clear()
+        ws_ta.update([df_ta_up.columns.values.tolist()] + df_ta_up.values.tolist())
+        
+        print("✅ HOÀN TẤT! Dữ liệu đã đổ bộ thành công lên cả 2 Sheet.")
     else:
         print("❌ Lỗi: Không có dữ liệu đầu ra.")
 

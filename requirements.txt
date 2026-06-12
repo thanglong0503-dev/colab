@@ -5,3 +5,4 @@ google-auth
 google-genai
 vnstock3
 duckduckgo-search
+yfinance

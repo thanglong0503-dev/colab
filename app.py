@@ -174,6 +174,16 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                             data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet[essential_cols].head(200).to_csv(index=False)}\n\n"
                         else:
                             data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
+                    
+                    # === ĐÂY LÀ ĐOẠN MỚI THÊM VÀO CHO ICHIMOKU ===
+                    elif sheet_name == "TA_DATA" and not df_sheet.empty:
+                        ta_cols = [c for c in ['Mã CK', 'Giá Hiện Tại', 'Tenkan_sen (9)', 'Kijun_sen (26)', 'Senkou_A (Mây)', 'Senkou_B (Mây)', 'Trạng Thái Mây', 'Tín Hiệu Kumo'] if c in df_sheet.columns]
+                        if ta_cols:
+                            data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet[ta_cols].head(200).to_csv(index=False)}\n\n"
+                        else:
+                            data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
+                    # ===============================================
+
                     else:
                         data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
 
@@ -187,11 +197,12 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                 sys_prompt = """
                 Bạn là AI Analyst cấp cao tại LINANCE.
                 NGUYÊN TẮC HOẠT ĐỘNG:
-                1. ƯU TIÊN SỐ 1: Bám sát DỮ LIỆU NỘI BỘ (RS_DATA, INDUSTRY_DATA, REPORTS_DB...) được cung cấp bên dưới để phân tích định lượng.
-                2. TÌM KIẾM MỞ RỘNG: NẾU dữ liệu nội bộ không đủ trả lời, HÃY TỰ ĐỘNG GỌI CÔNG CỤ `search_internet`.
-                3. NGUỒN: Khi sử dụng thông tin từ Internet, BẮT BUỘC trích dẫn link nguồn.
-                4. CẤM: Không in lại bảng dữ liệu CSV thô.
-                5. MIỄN TRỪ TRÁCH NHIỆM: Ở CUỐI MỌI CÂU TRẢ LỜI, chèn chính xác dòng chữ in nghiêng sau: "*Miễn trừ trách nhiệm: Thông tin chỉ mang tính chất tham khảo dựa trên dữ liệu hiện có và không phải là lời khuyên đầu tư.*"
+                1. ƯU TIÊN SỐ 1: Bám sát DỮ LIỆU NỘI BỘ (RS_DATA, TA_DATA...) được cung cấp bên dưới để phân tích định lượng. Tuyệt đối dùng giá từ dữ liệu nội bộ.
+                2. KỸ NĂNG PHÂN TÍCH KỸ THUẬT (ICHIMOKU): Khi được hỏi về xu hướng, điểm mua/bán hoặc đánh giá kỹ thuật, bạn BẮT BUỘC phải truy xuất bảng TA_DATA. Hãy phân tích rõ vị thế Giá so với Mây Kumo, sự giao cắt của Tenkan/Kijun và kết hợp với điểm Tech_Score trong RS_DATA để đưa ra kết luận sắc bén, súc tích.
+                3. TÌM KIẾM MỞ RỘNG: NẾU dữ liệu nội bộ không đủ trả lời, HÃY TỰ ĐỘNG GỌI CÔNG CỤ `search_internet`.
+                4. NGUỒN: Khi sử dụng thông tin từ Internet, BẮT BUỘC trích dẫn link nguồn.
+                5. CẤM: Không in lại bảng dữ liệu CSV thô.
+                6. MIỄN TRỪ TRÁCH NHIỆM: Ở CUỐI MỌI CÂU TRẢ LỜI, chèn chính xác: "*Miễn trừ trách nhiệm: Thông tin chỉ mang tính chất tham khảo dựa trên dữ liệu hiện có và không phải là lời khuyên đầu tư.*"
                 """
                 
                 full_prompt = f"{sys_prompt}\n\n📊 KHO DỮ LIỆU NỘI BỘ:\n{data_context}\n\nTRUY VẤN: {prompt}"

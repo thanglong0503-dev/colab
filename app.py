@@ -40,6 +40,13 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         
     data = stock_rs.iloc[0].to_dict()
     
+    # Lưu trữ giá trị nguyên bản từ Google Sheets để hiển thị trực tiếp
+    raw_pe = data.get('P/E', 'N/A')
+    raw_pb = data.get('P/B', 'N/A')
+    raw_roe = data.get('ROE (%)', 'N/A')
+    raw_debt = data.get('Nợ/Vốn Chủ', 'N/A')
+    raw_price = data.get('Giá', 'N/A')
+    
     atk_score = int(data.get('RS_1M', 50))
     mp_score = int(data.get('MFI_14', 50))
     tech_score = data.get('Tech_Score', 0)
@@ -49,44 +56,32 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         ta_data = df_ta[df_ta['Mã CK'] == ticker].iloc[0].to_dict()
         if "TRÊN Mây" in str(ta_data.get('Trạng Thái Mây', '')): def_score += 30
         elif "DƯỚI Mây" in str(ta_data.get('Trạng Thái Mây', '')): def_score -= 20
-    if float(data.get('ROE (%)', 0)) > 15: def_score += 20
-
-    # Hàm tự động khắc phục lỗi định dạng dấu phẩy từ Google Sheets
-    def auto_fix_ratio(val):
-        try:
-            if isinstance(val, str): 
-                val = val.replace(',', '.')
-            v = float(val)
-            # Tự động lùi dấu thập phân nếu hệ thống đọc sai thành hàng nghìn
-            while v > 100:
-                v /= 10
-            return v
-        except:
-            return 0.0
-
-    pe_f = auto_fix_ratio(data.get('P/E', 0))
-    pb_f = auto_fix_ratio(data.get('P/B', 0))
-    roe_f = auto_fix_ratio(data.get('ROE (%)', 0))
-    
+        
     try:
-        cap_val = data.get('Vốn Hóa', 0)
-        if isinstance(cap_val, str): 
-            cap_val = cap_val.replace(',', '.')
-        cap_f = float(cap_val)
+        if float(str(raw_roe).replace(',', '.')) > 15: def_score += 20
     except:
-        cap_f = 0.0
+        pass
 
+    # Tính toán chỉ số định giá nội bộ (không ảnh hưởng đến văn bản hiển thị)
     int_score = 50
-    if 0 < pe_f < 15: int_score += 20
-    elif pe_f > 25 or pe_f < 0: int_score -= 20
-
-    if 0 < pb_f < 1.5: int_score += 20
-    elif pb_f > 3.0: int_score -= 20
+    try:
+        pe_f = float(str(raw_pe).replace(',', '.'))
+        if 0 < pe_f < 15: int_score += 20
+        elif pe_f > 25 or pe_f < 0: int_score -= 20
+    except:
+        pass
 
     try:
-        debt_eq = auto_fix_ratio(data.get('Nợ/Vốn Chủ', 0))
-        if 0 <= debt_eq < 1.0: int_score += 10
-        elif debt_eq > 2.0: int_score -= 10
+        pb_f = float(str(raw_pb).replace(',', '.'))
+        if 0 < pb_f < 1.5: int_score += 20
+        elif pb_f > 3.0: int_score -= 20
+    except:
+        pass
+
+    try:
+        debt_f = float(str(raw_debt).replace(',', '.'))
+        if 0 <= debt_f < 1.0: int_score += 10
+        elif debt_f > 2.0: int_score -= 10
     except:
         pass
 
@@ -112,10 +107,8 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         <h3 style="margin:0; color:#FFF;">[{ticker}] - {rpg_class}</h3>
         <p style="color:{t_col}; font-weight:bold; font-size:18px;">XẾP HẠNG: {tier}</p>
         <hr style="border-color: rgba(255,255,255,0.1); margin: 10px 0;">
-    </div>
     """, unsafe_allow_html=True)
     
-    # Chia cấu trúc thành 2 cột tương đương với bản thiết kế
     col1, col2 = st.columns(2)
     
     with col1:
@@ -126,10 +119,10 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         st.progress(mp_score / 100)
         
         try:
-            current_price = float(str(data.get('Giá', 0)).replace(',', '.'))
-            price_display = f"{current_price:,.0f} VNĐ"
-        except (ValueError, TypeError):
-            price_display = "N/A"
+            price_val = float(str(raw_price).replace(',', '.'))
+            price_display = f"{price_val:,.0f} VNĐ"
+        except:
+            price_display = str(raw_price)
             
         st.markdown(f"**GIÁ HIỆN TẠI:** {price_display}")
 
@@ -140,12 +133,9 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         st.markdown(f"**INT (Trí tuệ - Định giá):** {int_score}")
         st.progress(int_score / 100)
         
-        pe_str = f"{pe_f:,.1f}" if pe_f else "N/A"
-        pb_str = f"{pb_f:,.1f}" if pb_f else "N/A"
-        roe_str = f"{roe_f:,.1f}%" if roe_f else "N/A"
-        cap_str = f"{cap_f:,.1f}" if cap_f else "N/A"
+        st.markdown(f"**THÔNG SỐ:** P/E: {raw_pe} | P/B: {raw_pb} | ROE: {raw_roe}%")
         
-        st.markdown(f"**THÔNG SỐ CƠ BẢN:** \nP/E: {pe_str} | P/B: {pb_str} | ROE: {roe_str} | Vốn hóa: {cap_str} Tỷ")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 def search_internet(query: str) -> str:
     from duckduckgo_search import DDGS
@@ -244,48 +234,22 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
             try:
                 data_context = ""
                 for sheet_name, df_sheet in dict_dfs.items():
-                    # ----------------------------------------------------
-                    # CHỐT CHẶN BỘ LỌC DỮ LIỆU ĐƯA VÀO NÃO AI
-                    # ----------------------------------------------------
                     if not df_sheet.empty:
-                        # 1. Tạo một bản sao để rửa dữ liệu (tránh làm hỏng DataFrame gốc)
-                        df_clean = df_sheet.copy()
-                        
-                        # Hàm tự động sửa lỗi dấu phẩy và tỷ lệ ngáo
-                        def auto_fix_ai_ratio(val):
-                            try:
-                                if isinstance(val, str): 
-                                    val = val.replace(',', '.')
-                                v = float(val)
-                                # Nếu số lớn bất thường (trên 100), lùi dấu thập phân lại cho đến khi hợp lý
-                                while v > 100:
-                                    v /= 10
-                                return round(v, 2)
-                            except:
-                                return 0.0
-
-                        # 2. Xử lý các cột lỗi định dạng ở những chỉ số tài chính cơ bản
-                        cols_to_fix = ['P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ', 'Thanh_Khoản_Tỷ']
-                        for col in cols_to_fix:
-                            if col in df_clean.columns:
-                                df_clean[col] = df_clean[col].apply(auto_fix_ai_ratio)
-                        
-                        # 3. Lọc và ép thành Text gửi cho AI
                         if sheet_name == "RS_DATA":
-                            essential_cols = [c for c in ['Mã CK', 'Ngành', 'Giá', 'RS_1M', 'Tech_Score', 'Trạng Thái', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ'] if c in df_clean.columns]
+                            essential_cols = [c for c in ['Mã CK', 'Ngành', 'Giá', 'RS_1M', 'Tech_Score', 'Trạng Thái', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ'] if c in df_sheet.columns]
                             if essential_cols: 
-                                data_context += f"--- DATASET: {sheet_name} ---\n{df_clean[essential_cols].head(200).to_csv(index=False)}\n\n"
+                                data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet[essential_cols].head(200).to_csv(index=False)}\n\n"
                             else: 
-                                data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
+                                data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
                                 
                         elif sheet_name == "TA_DATA":
-                            ta_cols = [c for c in ['Mã CK', 'Giá Hiện Tại', 'Tenkan_sen (9)', 'Kijun_sen (26)', 'Senkou_A (Mây)', 'Senkou_B (Mây)', 'Trạng Thái Mây', 'Tín Hiệu Kumo'] if c in df_clean.columns]
+                            ta_cols = [c for c in ['Mã CK', 'Giá Hiện Tại', 'Tenkan_sen (9)', 'Kijun_sen (26)', 'Senkou_A (Mây)', 'Senkou_B (Mây)', 'Trạng Thái Mây', 'Tín Hiệu Kumo'] if c in df_sheet.columns]
                             if ta_cols: 
-                                data_context += f"--- DATASET: {sheet_name} ---\n{df_clean[ta_cols].head(200).to_csv(index=False)}\n\n"
+                                data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet[ta_cols].head(200).to_csv(index=False)}\n\n"
                             else: 
-                                data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
+                                data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
                         else:
-                            data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
+                            data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
 
                 st.caption(f"Dữ liệu hệ thống đã nạp: {', '.join(dict_dfs.keys())}")
 

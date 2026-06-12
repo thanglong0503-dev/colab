@@ -244,16 +244,39 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
             try:
                 data_context = ""
                 for sheet_name, df_sheet in dict_dfs.items():
-                    if sheet_name == "RS_DATA" and not df_sheet.empty:
-                        essential_cols = [c for c in ['Mã CK', 'Ngành', 'Giá', 'RS_1M', 'Tech_Score', 'Trạng Thái', 'P/E', 'ROE (%)', 'RSI_14'] if c in df_sheet.columns]
-                        if essential_cols: data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet[essential_cols].head(200).to_csv(index=False)}\n\n"
-                        else: data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
-                    elif sheet_name == "TA_DATA" and not df_sheet.empty:
-                        ta_cols = [c for c in ['Mã CK', 'Giá Hiện Tại', 'Tenkan_sen (9)', 'Kijun_sen (26)', 'Senkou_A (Mây)', 'Senkou_B (Mây)', 'Trạng Thái Mây', 'Tín Hiệu Kumo'] if c in df_sheet.columns]
-                        if ta_cols: data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet[ta_cols].head(200).to_csv(index=False)}\n\n"
-                        else: data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
-                    else:
-                        data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
+                    # ----------------------------------------------------
+                    # CHỐT CHẶN BỘ LỌC DỮ LIỆU ĐƯA VÀO NÃO AI
+                    # ----------------------------------------------------
+                    if not df_sheet.empty:
+                        # 1. Tạo một bản sao để rửa dữ liệu (tránh làm hỏng DataFrame gốc)
+                        df_clean = df_sheet.copy()
+                        
+                        # 2. Xử lý các cột lỗi định dạng dấu phẩy ở những chỉ số tài chính cơ bản
+                        cols_to_fix = ['P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ', 'Thanh_Khoản_Tỷ']
+                        for col in cols_to_fix:
+                            if col in df_clean.columns:
+                                # Chuyển thành chuỗi, thay dấu phẩy thành chấm, ép về kiểu số float
+                                df_clean[col] = df_clean[col].astype(str).str.replace(',', '.', regex=False)
+                                df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
+                                # Lùi dấu thập phân nếu số bị giãn ra hàng nghìn do lỗi nhập liệu cũ
+                                df_clean[col] = df_clean[col].apply(lambda x: x / 1000 if x > 100 else x)
+                        
+                        # 3. Lọc và ép thành Text gửi cho AI
+                        if sheet_name == "RS_DATA":
+                            essential_cols = [c for c in ['Mã CK', 'Ngành', 'Giá', 'RS_1M', 'Tech_Score', 'Trạng Thái', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ'] if c in df_clean.columns]
+                            if essential_cols: 
+                                data_context += f"--- DATASET: {sheet_name} ---\n{df_clean[essential_cols].head(200).to_csv(index=False)}\n\n"
+                            else: 
+                                data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
+                                
+                        elif sheet_name == "TA_DATA":
+                            ta_cols = [c for c in ['Mã CK', 'Giá Hiện Tại', 'Tenkan_sen (9)', 'Kijun_sen (26)', 'Senkou_A (Mây)', 'Senkou_B (Mây)', 'Trạng Thái Mây', 'Tín Hiệu Kumo'] if c in df_clean.columns]
+                            if ta_cols: 
+                                data_context += f"--- DATASET: {sheet_name} ---\n{df_clean[ta_cols].head(200).to_csv(index=False)}\n\n"
+                            else: 
+                                data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
+                        else:
+                            data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
 
                 st.caption(f"Dữ liệu hệ thống đã nạp: {', '.join(dict_dfs.keys())}")
 

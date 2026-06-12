@@ -5,7 +5,7 @@ from google.oauth2.service_account import Credentials
 from google import genai
 from google.genai import types
 # ==========================================
-# GIAO DIỆN: THẺ BÀI RPG
+# GIAO DIỆN: THẺ BÀI RPG (ĐÃ FIX LỖI PANDAS SERIES)
 # ==========================================
 def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None):
     # 1. TÌM DỮ LIỆU
@@ -14,18 +14,21 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         st.warning(f"Chiến binh {ticker} chưa xuất hiện trong Database.")
         return
         
-    data = stock_rs.iloc[0]
+    # Chuyển dòng dữ liệu (Series) thành Dictionary để dùng được hàm .get() an toàn
+    data = stock_rs.iloc[0].to_dict()
     
     # 2. CHỈ SỐ GAME
+    # Sử dụng dict.get(key, default_value)
     atk_score = int(data.get('RS_1M', 50))
     mp_score = int(data.get('MFI_14', 50))
     tech_score = data.get('Tech_Score', 0)
     
     def_score = 50
     if df_ta is not None and not df_ta.empty and ticker in df_ta['Mã CK'].values:
-        ta_data = df_ta[df_ta['Mã CK'] == ticker].iloc[0]
+        ta_data = df_ta[df_ta['Mã CK'] == ticker].iloc[0].to_dict() # Cũng chuyển sang Dict
         if "TRÊN Mây" in str(ta_data.get('Trạng Thái Mây', '')): def_score += 30
         elif "DƯỚI Mây" in str(ta_data.get('Trạng Thái Mây', '')): def_score -= 20
+        
     if float(data.get('ROE (%)', 0)) > 15: def_score += 20
     def_score = min(max(def_score, 0), 100)
 
@@ -60,7 +63,15 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
     with col2:
         st.markdown(f"**💧 MP (Mana/Dòng tiền):** {mp_score}")
         st.progress(mp_score / 100)
-        st.markdown(f"**❤️ HP (Giá hiện tại):** {data.get('Giá', 0):,.0f} ₫")
+        
+        # Format giá an toàn phòng trường hợp giá trị bị lỗi chuỗi
+        try:
+            current_price = float(data.get('Giá', 0))
+            price_display = f"{current_price:,.0f} ₫"
+        except (ValueError, TypeError):
+            price_display = "N/A"
+            
+        st.markdown(f"**❤️ HP (Giá hiện tại):** {price_display}")
 # ==========================================
 # CẤU HÌNH GIAO DIỆN (AI CYBER & iOS STYLE)
 # ==========================================

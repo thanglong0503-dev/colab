@@ -163,19 +163,27 @@ with st.sidebar:
         st.cache_data.clear() # Xóa sạch trí nhớ cũ
         st.rerun() # Tải lại ứng dụng
 
-API_KEY = st.secrets["GEMINI_API_KEY"]
-# === TÍNH NĂNG SOI THẺ BÀI RPG ===
+    # === TÍNH NĂNG SOI THẺ BÀI RPG (Đã đưa vào trong Sidebar) ===
     st.markdown("---")
     st.markdown("### 🎮 SOI CHỈ SỐ CHIẾN BINH")
     rpg_ticker = st.text_input("Nhập Mã CK (VD: HPG):", "").upper()
     
     if rpg_ticker:
-        # Lấy dữ liệu từ bộ nhớ dict_dfs của Ngài
-        df_rs = dict_dfs.get("RS_DATA", pd.DataFrame())
-        df_ta = dict_dfs.get("TA_DATA", pd.DataFrame())
-        
-        if not df_rs.empty:
-            render_rpg_card(rpg_ticker, df_rs, df_ta)
+        # Kiểm tra xem dict_dfs đã được định nghĩa chưa (Hàm load_all_sheets của Ngài)
+        if "dict_dfs" in locals() or "dict_dfs" in globals():
+            df_rs = dict_dfs.get("RS_DATA", pd.DataFrame())
+            df_ta = dict_dfs.get("TA_DATA", pd.DataFrame())
+            
+            if not df_rs.empty:
+                render_rpg_card(rpg_ticker, df_rs, df_ta)
+            else:
+                st.warning("Dữ liệu RS_DATA đang trống. Vui lòng bấm Loading DATA.")
+        else:
+            st.error("Hệ thống chưa tải dữ liệu (dict_dfs). Vui lòng kiểm tra lại hàm load_all_sheets().")
+
+# Khai báo API KEY ở bên ngoài (Sau khi đã vẽ xong Sidebar)
+API_KEY = st.secrets["GEMINI_API_KEY"]
+
 # ==========================================
 # 1. HÀM TẢI DỮ LIỆU TỰ ĐỘNG QUÉT TOÀN BỘ CÁC SHEET
 # ==========================================

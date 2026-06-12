@@ -40,12 +40,10 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         
     data = stock_rs.iloc[0].to_dict()
     
-    # 1. TRÍCH XUẤT VÀ TÍNH TOÁN CÁC CHỈ SỐ GỐC
     atk_score = int(data.get('RS_1M', 50))
     mp_score = int(data.get('MFI_14', 50))
     tech_score = data.get('Tech_Score', 0)
     
-    # Tính toán DEF (Phòng thủ - Kỹ thuật)
     def_score = 50
     if df_ta is not None and not df_ta.empty and ticker in df_ta['Mã CK'].values:
         ta_data = df_ta[df_ta['Mã CK'] == ticker].iloc[0].to_dict()
@@ -53,34 +51,50 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         elif "DƯỚI Mây" in str(ta_data.get('Trạng Thái Mây', '')): def_score -= 20
     if float(data.get('ROE (%)', 0)) > 15: def_score += 20
 
-    # Tính toán INT (Định giá & Sức khỏe tài chính)
-    int_score = 50
+    # Hàm tự động khắc phục lỗi định dạng dấu phẩy từ Google Sheets
+    def auto_fix_ratio(val):
+        try:
+            if isinstance(val, str): 
+                val = val.replace(',', '.')
+            v = float(val)
+            # Tự động lùi dấu thập phân nếu hệ thống đọc sai thành hàng nghìn
+            while v > 100:
+                v /= 10
+            return v
+        except:
+            return 0.0
+
+    pe_f = auto_fix_ratio(data.get('P/E', 0))
+    pb_f = auto_fix_ratio(data.get('P/B', 0))
+    roe_f = auto_fix_ratio(data.get('ROE (%)', 0))
+    
     try:
-        pe = float(data.get('P/E', 0))
-        pb = float(data.get('P/B', 0))
-        debt_eq = float(data.get('Nợ/Vốn Chủ', 0))
+        cap_val = data.get('Vốn Hóa', 0)
+        if isinstance(cap_val, str): 
+            cap_val = cap_val.replace(',', '.')
+        cap_f = float(cap_val)
+    except:
+        cap_f = 0.0
 
-        # Đánh giá P/E
-        if 0 < pe < 15: int_score += 20
-        elif pe > 25 or pe < 0: int_score -= 20
+    int_score = 50
+    if 0 < pe_f < 15: int_score += 20
+    elif pe_f > 25 or pe_f < 0: int_score -= 20
 
-        # Đánh giá P/B
-        if 0 < pb < 1.5: int_score += 20
-        elif pb > 3.0: int_score -= 20
+    if 0 < pb_f < 1.5: int_score += 20
+    elif pb_f > 3.0: int_score -= 20
 
-        # Đánh giá cấu trúc vốn
+    try:
+        debt_eq = auto_fix_ratio(data.get('Nợ/Vốn Chủ', 0))
         if 0 <= debt_eq < 1.0: int_score += 10
         elif debt_eq > 2.0: int_score -= 10
-    except (ValueError, TypeError):
+    except:
         pass
 
-    # 2. CHỐT CHẶN AN TOÀN TOÁN HỌC (CLAMP)
     atk_score = min(max(atk_score, 0), 100)
     mp_score = min(max(mp_score, 0), 100)
     def_score = min(max(def_score, 0), 100)
     int_score = min(max(int_score, 0), 100)
 
-    # 3. PHÂN LOẠI HỆ PHÁI VÀ XẾP HẠNG
     if tech_score >= 6: tier, t_col = "S-TIER", "#FFD700"
     elif tech_score >= 3: tier, t_col = "A-TIER", "#00FF00"
     elif tech_score >= 0: tier, t_col = "B-TIER", "#0A84FF"
@@ -93,38 +107,45 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
     elif "Bất động sản" in industry: rpg_class = "BERSERKER (Chu kỳ)"
     else: rpg_class = "RANGER (Linh hoạt)"
 
-    # 4. KẾT XUẤT GIAO DIỆN
     st.markdown(f"""
     <div style="background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 18px; padding: 20px; margin-bottom: 20px;">
         <h3 style="margin:0; color:#FFF;">[{ticker}] - {rpg_class}</h3>
         <p style="color:{t_col}; font-weight:bold; font-size:18px;">XẾP HẠNG: {tier}</p>
         <hr style="border-color: rgba(255,255,255,0.1); margin: 10px 0;">
+    </div>
     """, unsafe_allow_html=True)
     
+    # Chia cấu trúc thành 2 cột tương đương với bản thiết kế
     col1, col2 = st.columns(2)
+    
     with col1:
         st.markdown(f"**ATK (Tấn công - Sức mạnh giá):** {atk_score}")
         st.progress(atk_score / 100)
-        st.markdown(f"**DEF (Phòng thủ - Xu hướng):** {def_score}")
-        st.progress(def_score / 100)
-    with col2:
+        
         st.markdown(f"**MP (Mana - Dòng tiền):** {mp_score}")
         st.progress(mp_score / 100)
+        
+        try:
+            current_price = float(str(data.get('Giá', 0)).replace(',', '.'))
+            price_display = f"{current_price:,.0f} VNĐ"
+        except (ValueError, TypeError):
+            price_display = "N/A"
+            
+        st.markdown(f"**GIÁ HIỆN TẠI:** {price_display}")
+
+    with col2:
+        st.markdown(f"**DEF (Phòng thủ - Xu hướng):** {def_score}")
+        st.progress(def_score / 100)
+        
         st.markdown(f"**INT (Trí tuệ - Định giá):** {int_score}")
         st.progress(int_score / 100)
         
-    st.markdown("<hr style='border-color: rgba(255,255,255,0.1); margin: 15px 0;'>", unsafe_allow_html=True)
-    
-    try:
-        current_price = float(data.get('Giá', 0))
-        price_display = f"{current_price:,.0f} VNĐ"
-    except (ValueError, TypeError):
-        price_display = "N/A"
+        pe_str = f"{pe_f:,.1f}" if pe_f else "N/A"
+        pb_str = f"{pb_f:,.1f}" if pb_f else "N/A"
+        roe_str = f"{roe_f:,.1f}%" if roe_f else "N/A"
+        cap_str = f"{cap_f:,.1f}" if cap_f else "N/A"
         
-    st.markdown(f"**GIÁ HIỆN TẠI:** {price_display}")
-    st.markdown(f"**THÔNG SỐ CƠ BẢN:** P/E: {data.get('P/E', 'N/A')} | P/B: {data.get('P/B', 'N/A')} | ROE: {data.get('ROE (%)', 'N/A')}% | Vốn hóa: {data.get('Vốn Hóa', 'N/A')} Tỷ")
-    
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(f"**THÔNG SỐ CƠ BẢN:** \nP/E: {pe_str} | P/B: {pb_str} | ROE: {roe_str} | Vốn hóa: {cap_str} Tỷ")
 
 def search_internet(query: str) -> str:
     from duckduckgo_search import DDGS

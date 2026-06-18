@@ -229,9 +229,13 @@ with st.sidebar:
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Hệ thống phân tích đã sẵn sàng tiếp nhận truy vấn."}]
 
+# Cấu trúc mới để lưu trạng thái đồ thị đi kèm với tin nhắn
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        # Nếu tin nhắn này có đính kèm biểu đồ, hãy vẽ nó ra
+        if "chart" in message:
+            st.line_chart(message["chart"])
 
 if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân tích..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -244,27 +248,22 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                 data_context = ""
                 for sheet_name, df_sheet in dict_dfs.items():
                     if not df_sheet.empty:
+                        df_clean = df_sheet.copy().round(2)
                         if sheet_name == "RS_DATA":
-                            essential_cols = [c for c in ['Mã CK', 'Ngành', 'Giá', 'RS_1M', 'Tech_Score', 'Trạng Thái', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ'] if c in df_sheet.columns]
-                            if essential_cols: 
-                                data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet[essential_cols].head(200).to_csv(index=False)}\n\n"
-                            else: 
-                                data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
-                                
+                            essential_cols = [c for c in ['Mã CK', 'Ngành', 'Giá', 'RS_1M', 'Tech_Score', 'Trạng Thái', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ'] if c in df_clean.columns]
+                            if essential_cols: data_context += f"--- DATASET: {sheet_name} ---\n{df_clean[essential_cols].head(200).to_csv(index=False)}\n\n"
+                            else: data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
                         elif sheet_name == "TA_DATA":
-                            ta_cols = [c for c in ['Mã CK', 'Giá Hiện Tại', 'Tenkan_sen (9)', 'Kijun_sen (26)', 'Senkou_A (Mây)', 'Senkou_B (Mây)', 'Trạng Thái Mây', 'Tín Hiệu Kumo'] if c in df_sheet.columns]
-                            if ta_cols: 
-                                data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet[ta_cols].head(200).to_csv(index=False)}\n\n"
-                            else: 
-                                data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
+                            ta_cols = [c for c in ['Mã CK', 'Giá Hiện Tại', 'Tenkan_sen (9)', 'Kijun_sen (26)', 'Senkou_A (Mây)', 'Senkou_B (Mây)', 'Trạng Thái Mây', 'Tín Hiệu Kumo'] if c in df_clean.columns]
+                            if ta_cols: data_context += f"--- DATASET: {sheet_name} ---\n{df_clean[ta_cols].head(200).to_csv(index=False)}\n\n"
+                            else: data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
                         else:
-                            data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
+                            data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
 
                 st.caption(f"Dữ liệu hệ thống đã nạp: {', '.join(dict_dfs.keys())}")
 
                 client = genai.Client(api_key=API_KEY)
                 
-                # CẬP NHẬT KỶ LUẬT THÉP BỔ SUNG YÊU CẦU VẼ ĐỒ THỊ
                 sys_prompt = """
                 Bạn là Bậc thầy Phân tích Định lượng và Cố vấn Giao dịch cấp tổ chức tại LINANCE Terminal.
                 MỤC TIÊU CỐT LÕI: Loại bỏ hoàn toàn các nhận định chung chung, nước đôi. Mọi tư vấn phải sắc bén, mang tính quyết đoán và có thể giao dịch ngay (Actionable Trading Plan).
@@ -300,10 +299,11 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                     contents=full_prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.2,
-                        # ĐÃ NẠP THÊM KIẾM MỚI VÀO KHO VŨ KHÍ
                         tools=[search_internet, get_live_stock_data, draw_technical_chart] 
                     )
                 )
+                
+                chart_data_to_save = None # Biến tạm để lưu dữ liệu biểu đồ
                 
                 if response.function_calls:
                     messages_for_ai = [
@@ -324,7 +324,6 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                             st.caption(f"Hệ thống đang cập nhật dữ liệu Real-time mã: {ticker}...")
                             result_text = get_live_stock_data(ticker)
                             
-                        # XỬ LÝ LỆNH VẼ ĐỒ THỊ TẠI ĐÂY
                         elif tool_call.name == "draw_technical_chart":
                             ticker = tool_call.args.get("ticker", "").strip().upper()
                             st.caption(f"Hệ thống đang truy xuất lịch sử giá và dựng đồ thị tương tác mã: {ticker}...")
@@ -335,9 +334,12 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                                 stock = yf.Ticker(yf_ticker)
                                 hist_data = stock.history(period="3mo")
                                 if not hist_data.empty:
-                                    # Ép cấu trúc chuỗi thời gian để dựng đồ thị tương tác cục bộ trong khung chat
+                                    # Lấy dữ liệu và lưu vào biến tạm
                                     chart_df = hist_data[['Close']].copy()
+                                    # Vẽ trực tiếp lên khung chat hiện tại
                                     st.line_chart(chart_df)
+                                    # Lưu vào biến tạm để lát add vào session_state
+                                    chart_data_to_save = chart_df 
                                     result_text = f"[SYSTEM] Đồ thị xu hướng giá 3 tháng gần nhất của {ticker} đã được hiển thị trực tiếp trên giao diện dòng lệnh. Hãy đưa ra kết luận phân tích."
                                 else:
                                     result_text = f"[SYSTEM CẢNH BÁO] Không tìm thấy dữ liệu giá lịch sử của mã {ticker} trên máy chủ yfinance."
@@ -359,7 +361,12 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                     )
                 
                 st.markdown(response.text)
-                st.session_state.messages.append({"role": "assistant", "content": response.text})
+                
+                # Lưu toàn bộ cấu trúc (bao gồm cả text và biểu đồ nếu có) vào bộ nhớ hệ thống
+                new_msg = {"role": "assistant", "content": response.text}
+                if chart_data_to_save is not None:
+                    new_msg["chart"] = chart_data_to_save
+                st.session_state.messages.append(new_msg)
                 
             except Exception as e:
                 st.error(f"SYSTEM FAULT: {e}")

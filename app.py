@@ -249,9 +249,12 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                 data_context = ""
                 for sheet_name, df_sheet in dict_dfs.items():
                     if not df_sheet.empty:
-                        df_clean = df_sheet.copy().round(2)
+                        # Ép kiểu float về str tránh lỗi làm tròn nếu có chuỗi lẫn lộn
+                        df_clean = df_sheet.copy()
+                        for col in df_clean.select_dtypes(include=['float64', 'float32']).columns:
+                            df_clean[col] = df_clean[col].round(2)
+
                         if sheet_name == "RS_DATA":
-                            # ĐÃ BỔ SUNG CỘT KL_TB_20 VÀ Đột_Biến_KL VÀO CẤU TRÚC NGỮ CẢNH AI
                             essential_cols = [c for c in ['Mã CK', 'Ngành', 'Giá', 'RS_1M', 'KL_TB_20', 'Đột_Biến_KL', 'Tech_Score', 'Trạng Thái', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ'] if c in df_clean.columns]
                             if essential_cols: 
                                 data_context += f"--- DATASET: {sheet_name} ---\n{df_clean[essential_cols].head(200).to_csv(index=False)}\n\n"
@@ -259,34 +262,37 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                                 data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
                                 
                         elif sheet_name == "TA_DATA":
-                            ta_cols = [c for c in ['Mã CK', 'Giá Hiện Tại', 'Tenkan_sen (9)', 'Kijun_sen (26)', 'Senkou_A (Mây)', 'Senkou_B (Mây)', 'Trạng Thái Mây', 'Tín Hiệu Kumo'] if c in df_clean.columns]
+                            ta_cols = [c for c in ['Mã CK', 'Giá Hiện Tại', 'Tenkan_sen', 'Kijun_sen', 'Senkou_A', 'Senkou_B', 'Trạng Thái Mây', 'Tín Hiệu Kumo'] if c in df_clean.columns]
                             if ta_cols: 
                                 data_context += f"--- DATASET: {sheet_name} ---\n{df_clean[ta_cols].head(200).to_csv(index=False)}\n\n"
                             else: 
                                 data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
                         else:
+                            # NẠP CÁC BẢNG NỘI BỘ KHÁC (NHƯ REPORTS_DB) NẾU CÓ
                             data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
 
                 st.caption(f"Dữ liệu hệ thống đã nạp: {', '.join(dict_dfs.keys())}")
 
                 client = genai.Client(api_key=API_KEY)
                 
+                # KHÔI PHỤC TOÀN BỘ LOGIC: KHỐI LƯỢNG + ICHIMOKU + BÁO CÁO NỘI BỘ
                 sys_prompt = """
                 Bạn là Bậc thầy Phân tích Định lượng và Cố vấn Giao dịch cấp tổ chức tại LINANCE Terminal.
                 MỤC TIÊU CỐT LÕI: Đưa ra Kế hoạch Giao dịch (Actionable Trading Plan) quyết đoán. Tuyệt đối không nhận định nước đôi.
 
                 NGUYÊN TẮC HOẠT ĐỘNG:
-                1. ĐỘT BIẾN KHỐI LƯỢNG LÀ TÍN HIỆU CỐT LÕI: Khi phân tích, luôn chú ý đến sự đột biến khối lượng (Đột_Biến_KL hoặc dữ liệu Real-time). Nếu mức độ đột biến > 150%, xác nhận đây là dấu vết của dòng tiền lớn (Smart Money).
-                2. KẾ HOẠCH GIAO DỊCH: BẮT BUỘC trình bày theo cấu trúc: 
-                   - LUẬN ĐIỂM (Tập trung vào sự xác nhận của khối lượng và giá).
-                   - VÙNG MUA (Entry Range).
-                   - ĐIỂM CẮT LỖ CỨNG (Stop-loss).
-                   - ĐIỂM CHỐT LỜI (Take-profit).
-                   - TỶ LỆ R:R.
-                3. BÁO CÁO TỔ CHỨC: Gọi `search_internet` tìm báo cáo phân tích mới nhất.
-                4. KIỂM CHỨNG REAL-TIME: Luôn gọi `get_live_stock_data` để cập nhật giá và XÁC NHẬN KHỐI LƯỢNG TRONG NGÀY.
-                5. VĂN PHONG VÀ TRÌNH BÀY: Chuyên nghiệp, lạnh lùng, định lượng. Tuyệt đối KHÔNG dùng emoji.
-                6. MIỄN TRỪ TRÁCH NHIỆM: Cuối câu trả lời luôn có: "*Miễn trừ trách nhiệm: Kế hoạch giao dịch trên được tổng hợp từ thuật toán định lượng và dữ liệu thị trường hiện hành, nhà đầu tư tự quản trị rủi ro đối với quyết định giải ngân.*"
+                1. ĐỘT BIẾN KHỐI LƯỢNG LÀ TÍN HIỆU CỐT LÕI: Luôn kiểm tra sự đột biến khối lượng (Đột_Biến_KL hoặc dữ liệu Real-time). Mức độ đột biến > 150% xác nhận dòng tiền lớn (Smart Money).
+                2. PHÂN TÍCH KỸ THUẬT & ICHIMOKU: Bắt buộc đối chiếu sự đồng thuận của hệ thống Ichimoku (Vị thế giá so với Mây Kumo, tín hiệu cắt của Tenkan-sen và Kijun-sen) từ bảng TA_DATA để củng cố luận điểm.
+                3. KẾ HOẠCH GIAO DỊCH: BẮT BUỘC trình bày theo cấu trúc: 
+                   - LUẬN ĐIỂM ĐẦU TƯ: Sự hội tụ giữa Dòng tiền (Khối lượng), Kỹ thuật (Ichimoku, RS) và Cơ bản (P/E, P/B).
+                   - VÙNG MUA (Entry Range): Dựa vào các mức hỗ trợ cứng của Ichimoku (Ví dụ: Kijun-sen, Senkou_A).
+                   - ĐIỂM CẮT LỖ CỨNG (Stop-loss): Có giải thích lý do kỹ thuật rõ ràng.
+                   - ĐIỂM CHỐT LỜI (Take-profit): Vùng giá mục tiêu kỳ vọng.
+                   - TỶ LỆ R:R: Tính toán rủi ro/lợi nhuận thực tế.
+                4. BÁO CÁO KHUYẾN NGHỊ TỔ CHỨC: Ưu tiên truy xuất và trích dẫn thông tin từ dữ liệu các báo cáo nội bộ trong hệ thống (REPORTS_DB, v.v.). Chỉ gọi công cụ `search_internet` khi dữ liệu nội bộ không có đủ thông tin hoặc cần tin tức vĩ mô nóng.
+                5. KIỂM CHỨNG REAL-TIME: Luôn gọi `get_live_stock_data` để cập nhật giá và XÁC NHẬN KHỐI LƯỢNG TRONG NGÀY.
+                6. VĂN PHONG VÀ TRÌNH BÀY: Chuyên nghiệp, lạnh lùng, định lượng. Tuyệt đối KHÔNG dùng emoji.
+                7. MIỄN TRỪ TRÁCH NHIỆM: Cuối câu trả lời luôn có: "*Miễn trừ trách nhiệm: Kế hoạch giao dịch trên được tổng hợp từ thuật toán định lượng và dữ liệu thị trường hiện hành, nhà đầu tư tự quản trị rủi ro đối với quyết định giải ngân.*"
                 """
                 
                 full_prompt = f"{sys_prompt}\n\nKHO DỮ LIỆU NỘI BỘ:\n{data_context}\n\nTRUY VẤN: {prompt}"

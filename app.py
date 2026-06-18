@@ -4,6 +4,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from google import genai
 from google.genai import types
+import re
 
 # ==========================================
 # CẤU HÌNH GIAO DIỆN CHÍNH
@@ -24,7 +25,6 @@ def load_all_sheets():
         spreadsheet = client.open("RS_DATA") 
         all_data = {}
         for ws in spreadsheet.worksheets():
-            # Lệnh UNFORMATTED_VALUE ép Google trả về đúng số thực (VD: 138.32), ngăn chặn việc xóa dấu phẩy
             records = ws.get_all_records(value_render_option='UNFORMATTED_VALUE')
             if records:
                 all_data[ws.title] = pd.DataFrame(records)
@@ -44,7 +44,6 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         
     data = stock_rs.iloc[0].to_dict()
     
-    # Hàm xử lý chuẩn: Nhận số thực (138.32) và hiển thị định dạng Việt Nam (138,32)
     def format_vn(val):
         try:
             if pd.isna(val): return "N/A"
@@ -54,7 +53,6 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
         except:
             return str(val)
 
-    # Định dạng các chỉ số hiển thị UI
     display_pe = format_vn(data.get('P/E', 'N/A'))
     display_pb = format_vn(data.get('P/B', 'N/A'))
     display_roe = format_vn(data.get('ROE (%)', 'N/A'))
@@ -65,7 +63,6 @@ def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None
     except:
         display_price = "N/A"
     
-    # Dữ liệu tính toán thanh tiến độ vẫn an toàn do giữ nguyên dạng float gốc
     atk_score = int(data.get('RS_1M', 50))
     mp_score = int(data.get('MFI_14', 50))
     tech_score = data.get('Tech_Score', 0)
@@ -164,8 +161,11 @@ def get_live_stock_data(ticker: str) -> str:
         return f"Hệ thống không thể truy xuất dữ liệu realtime cho {ticker}. Lỗi: {e}"
 
 def draw_technical_chart(ticker: str) -> str:
-    """Công cụ bắt buộc sử dụng khi người dùng yêu cầu xem đồ thị, biểu đồ kỹ thuật hoặc lịch sử xu hướng giá của một mã cổ phiếu cụ thể."""
-    return f"[SYSTEM CHART COMMAND] Kích hoạt cấu trúc lệnh dựng đồ thị tương tác nội bộ cho mã: {ticker}."
+    """MUST call this tool to execute Python code that draws the interactive line chart for the stock when user asks for 'đồ thị', 'biểu đồ', 'chart'.
+    Args:
+        ticker: The 3-letter stock symbol (e.g., HPG, SSI)
+    """
+    return f"[SYSTEM CHART COMMAND TRIGGERED] Hãy xác nhận bằng văn bản rằng đồ thị kỹ thuật mã {ticker} đang được hiển thị ngay bên dưới đoạn hội thoại."
 
 # ==========================================
 # 2. KHỞI TẠO BỘ NHỚ TRUNG TÂM
@@ -270,30 +270,16 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                 
                 sys_prompt = """
                 Bạn là Bậc thầy Phân tích Định lượng và Cố vấn Giao dịch cấp tổ chức tại LINANCE Terminal.
-                MỤC TIÊU CỐT LÕI: Loại bỏ hoàn toàn các nhận định chung chung, nước đôi. Mọi tư vấn phải sắc bén, mang tính quyết đoán và có thể giao dịch ngay (Actionable Trading Plan).
+                MỤC TIÊU CỐT LÕI: Loại bỏ hoàn toàn các nhận định chung chung. Mọi tư vấn phải sắc bén, quyết đoán và có kế hoạch giao dịch Actionable Trading Plan.
 
                 NGUYÊN TẮC HOẠT ĐỘNG:
-                1. QUÉT BÙNG NỔ KHỐI LƯỢNG & TỔNG QUAN: Khi được hỏi về toàn cảnh thị trường hoặc tìm kiếm cơ hội, hãy tự động rà quét tập dữ liệu để tìm ra các mã có tín hiệu "Bùng nổ dòng tiền": RS_1M cao vượt trội (Sức mạnh giá) kết hợp với MFI_14 lớn (Dòng tiền thông minh nhập cuộc). Nhóm các mã này theo ngành để chỉ ra sóng ngành hiện tại.
-                
-                2. KẾ HOẠCH GIAO DỊCH CHUYÊN SÂU: Khi phân tích một hoặc nhiều mã cổ phiếu cụ thể, BẮT BUỘC trình bày theo cấu trúc chuẩn mực sau:
-                   - LUẬN ĐIỂM ĐẦU TƯ: Đánh giá nhanh sự hội tụ giữa Phân tích Kỹ thuật (RS, Trạng Thái Mây Ichimoku) và Phân tích Cơ bản (P/E, P/B, ROE). Cổ phiếu này đang có câu chuyện gì?
-                   - VÙNG MUA (ENTRY RANGE): Xác định vùng giá gom hàng an toàn dựa trên giá Real-time và hỗ trợ gần nhất (Tenkan/Kijun hoặc Mây Kumo).
-                   - ĐIỂM CẮT LỖ (STOP-LOSS): Đưa ra mức giá cắt lỗ cứng (Hard stop) và giải thích lý do (Ví dụ: Thủng Kijun-sen, rơi khỏi mây Senkou_A).
-                   - ĐIỂM CHỐT LỜI (TAKE-PROFIT): Đưa ra vùng giá mục tiêu kỳ vọng.
-                   - TỶ LỆ R:R (RISK/REWARD): Bắt buộc tính toán và trình bày tỷ lệ R:R (Ví dụ: 1:2.5, 1:3). Đưa ra lời khuyên rõ ràng: "Đủ hấp dẫn để giải ngân" hoặc "Tỷ lệ R:R rủi ro, nên quan sát thêm".
-
-                3. TÍCH HỢP BÁO CÁO TỔ CHỨC: Tự động kích hoạt công cụ `search_internet` với từ khóa "Báo cáo phân tích + Mã cổ phiếu + Khuyến nghị" để lấy thêm góc nhìn định giá từ các tổ chức tài chính lớn làm luận điểm bảo vệ cho kế hoạch giao dịch.
-
-                4. KIỂM CHỨNG REAL-TIME: Bắt buộc dùng `get_live_stock_data` để cập nhật giá hiện tại trước khi đưa ra bất kỳ con số nào cho Điểm Mua. Không bao giờ dùng giá chốt phiên hôm qua để làm giá Entry cho hôm nay.
-
-                5. TRIỆU HỒI ĐỒ THỊ: Khi người dùng yêu cầu xem đồ thị, biểu đồ kỹ thuật hoặc lịch sử xu hướng giá, BẮT BUỘC phải sử dụng công cụ `draw_technical_chart` để hệ thống tự động vẽ biểu đồ trực quan.
-
-                6. VĂN PHONG VÀ TRÌNH BÀY:
-                   - Sử dụng ngôn ngữ tài chính chuyên nghiệp, lạnh lùng và dứt khoát.
-                   - Tuyệt đối KHÔNG sử dụng biểu tượng cảm xúc (emoji).
-                   - Trình bày rõ ràng bằng các gạch đầu dòng (bullet points) và bôi đậm các mức giá quan trọng.
-
-                7. MIỄN TRỪ TRÁCH NHIỆM: Ở cuối mọi câu trả lời, luôn chèn chính xác văn bản: "*Miễn trừ trách nhiệm: Kế hoạch giao dịch trên được tổng hợp từ thuật toán định lượng và dữ liệu thị trường hiện hành, nhà đầu tư tự quản trị rủi ro đối với quyết định giải ngân.*"
+                1. QUÉT BÙNG NỔ KHỐI LƯỢNG & TỔNG QUAN: Tìm mã có RS_1M cao và MFI_14 lớn.
+                2. KẾ HOẠCH GIAO DỊCH: Trình bày cấu trúc: LUẬN ĐIỂM, VÙNG MUA, ĐIỂM CẮT LỖ, ĐIỂM CHỐT LỜI, TỶ LỆ R:R.
+                3. BÁO CÁO TỔ CHỨC: Gọi `search_internet` tìm báo cáo phân tích mới nhất.
+                4. KIỂM CHỨNG REAL-TIME: Gọi `get_live_stock_data` lấy giá cập nhật.
+                5. TRIỆU HỒI ĐỒ THỊ: Khi có yêu cầu xem "đồ thị", "biểu đồ", BẮT BUỘC gọi hàm `draw_technical_chart` trên hệ thống API. KHÔNG ĐƯỢC TỰ BỊA RA VĂN BẢN NÓI RẰNG ĐÃ VẼ KHI CHƯA GỌI HÀM.
+                6. VĂN PHONG VÀ TRÌNH BÀY: Chuyên nghiệp, lạnh lùng. Tuyệt đối KHÔNG dùng emoji.
+                7. MIỄN TRỪ TRÁCH NHIỆM: Ở cuối câu trả lời, luôn chèn chính xác: "*Miễn trừ trách nhiệm: Kế hoạch giao dịch trên được tổng hợp từ thuật toán định lượng và dữ liệu thị trường hiện hành, nhà đầu tư tự quản trị rủi ro đối với quyết định giải ngân.*"
                 """
                 
                 full_prompt = f"{sys_prompt}\n\nKHO DỮ LIỆU NỘI BỘ:\n{data_context}\n\nTRUY VẤN: {prompt}"
@@ -307,6 +293,9 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                     )
                 )
                 
+                # Biến cờ theo dõi xem AI có thực sự gọi lệnh vẽ biểu đồ không
+                chart_triggered = False
+
                 if response.function_calls:
                     messages_for_ai = [
                         types.Content(role="user", parts=[types.Part.from_text(full_prompt)]),
@@ -318,17 +307,18 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                         result_text = ""
                         if tool_call.name == "search_internet":
                             query = tool_call.args.get("query", prompt)
-                            st.caption(f"Hệ thống đang truy xuất dữ liệu Internet: '{query}'...")
+                            st.caption(f"Hệ thống đang truy xuất Internet: '{query}'...")
                             result_text = search_internet(query)
                             
                         elif tool_call.name == "get_live_stock_data":
                             ticker = tool_call.args.get("ticker", "")
-                            st.caption(f"Hệ thống đang cập nhật dữ liệu Real-time mã: {ticker}...")
+                            st.caption(f"Hệ thống đang lấy giá Real-time mã: {ticker}...")
                             result_text = get_live_stock_data(ticker)
                             
                         elif tool_call.name == "draw_technical_chart":
                             ticker = tool_call.args.get("ticker", "").strip().upper()
-                            st.caption(f"Hệ thống đang kết nối API để dựng đồ thị mã: {ticker}...")
+                            chart_triggered = True
+                            st.caption(f"Hệ thống đang kết nối API đồ thị mã: {ticker}...")
                             
                             try:
                                 import yfinance as yf
@@ -336,22 +326,16 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                                 stock = yf.Ticker(yf_ticker)
                                 hist_data = stock.history(period="6mo")
                                 if not hist_data.empty:
-                                    # Lấy dữ liệu lưu trữ
                                     chart_df = hist_data[['Close']].copy()
                                     chart_df.rename(columns={'Close': f'Giá {ticker}'}, inplace=True)
+                                    # CHỐT CHẶN 1: Gỡ múi giờ quốc tế để tránh Streamlit đâm lỗi ngầm
+                                    chart_df.index = chart_df.index.tz_localize(None) 
                                     chart_data_to_save = chart_df
-                                    result_text = f"[SYSTEM] Đồ thị xu hướng giá 6 tháng của {ticker} ĐÃ ĐƯỢC VẼ THÀNH CÔNG trên màn hình người dùng. Hãy phân tích xu hướng dựa trên nó."
+                                    result_text = "[SYSTEM] Đã nhận được mảng dữ liệu. Hãy trả lời người dùng."
                                 else:
-                                    err_msg = f"Không tìm thấy dữ liệu giá lịch sử của mã {ticker} trên máy chủ chứng khoán."
-                                    st.error(f"LỖI HỆ THỐNG: {err_msg}")
-                                    result_text = f"[SYSTEM CẢNH BÁO] {err_msg}"
-                            except ImportError:
-                                err_msg = "Chưa cài đặt thư viện yfinance. Vui lòng chạy lệnh: !pip install yfinance"
-                                st.error(f"LỖI HỆ THỐNG: {err_msg}")
-                                result_text = f"[SYSTEM FAULT] {err_msg}"
+                                    result_text = f"[SYSTEM CẢNH BÁO] Không tìm thấy lịch sử giá {ticker}."
                             except Exception as chart_err:
-                                st.error(f"LỖI HỆ THỐNG VẼ ĐỒ THỊ: {chart_err}")
-                                result_text = f"[SYSTEM FAULT] Lỗi kéo dữ liệu đồ thị: {chart_err}"
+                                result_text = f"[SYSTEM FAULT] Lỗi: {chart_err}"
                                 
                         tool_response_parts.append(
                             types.Part.from_function_response(
@@ -366,19 +350,39 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                         contents=messages_for_ai,
                         config=types.GenerateContentConfig(temperature=0.2)
                     )
+            
+                # CHỐT CHẶN 2 (CƯỠNG CHẾ): Nếu AI lười biếng ảo giác, Python sẽ tự bóc mã CK và tự vẽ đồ thị!
+                if chart_data_to_save is None and ("đồ thị" in prompt.lower() or "biểu đồ" in prompt.lower() or "chart" in prompt.lower()):
+                    match = re.search(r'\b[A-Z]{3}\b', prompt.upper())
+                    fallback_ticker = match.group(0) if match else (rpg_ticker if rpg_ticker else None)
+                    
+                    if fallback_ticker:
+                        st.caption(f"[CƯỠNG CHẾ] Khởi động thuật toán vẽ đồ thị thủ công cho {fallback_ticker}...")
+                        import yfinance as yf
+                        try:
+                            yf_ticker = f"{fallback_ticker}.VN" if not fallback_ticker.endswith(".VN") else fallback_ticker
+                            stock = yf.Ticker(yf_ticker)
+                            hist_data = stock.history(period="6mo")
+                            if not hist_data.empty:
+                                chart_df = hist_data[['Close']].copy()
+                                chart_df.rename(columns={'Close': f'Giá {fallback_ticker}'}, inplace=True)
+                                chart_df.index = chart_df.index.tz_localize(None)
+                                chart_data_to_save = chart_df
+                        except:
+                            pass
+
             except Exception as e:
                 st.error(f"SYSTEM FAULT: {e}")
                 response = None
 
-        # BƯỚC QUYẾT ĐỊNH: VẼ ĐỒ THỊ VÀ VĂN BẢN NẰM NGOÀI VÒNG LẶP SPINNER
+        # HIỂN THỊ KẾT QUẢ ĐẦU RA AN TOÀN NGOÀI SPINNER
         if response:
             st.markdown(response.text)
             
-            # Xuất đồ thị thực tế ra giao diện
             if chart_data_to_save is not None:
                 st.line_chart(chart_data_to_save)
                 
-            # Lưu đồng bộ vào bộ nhớ tạm để không bị mất khi chat câu mới
+            # Lưu lại ngữ cảnh vào bộ nhớ hệ thống
             new_msg = {"role": "assistant", "content": response.text}
             if chart_data_to_save is not None:
                 new_msg["chart"] = chart_data_to_save

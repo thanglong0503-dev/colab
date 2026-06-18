@@ -163,6 +163,11 @@ def get_live_stock_data(ticker: str) -> str:
     except Exception as e:
         return f"Hệ thống không thể truy xuất dữ liệu realtime cho {ticker}. Lỗi: {e}"
 
+# ĐÂY LÀ HÀM KỸ NĂNG MỚI CHO AI
+def draw_technical_chart(ticker: str) -> str:
+    """Công cụ bắt buộc sử dụng khi người dùng yêu cầu xem đồ thị, biểu đồ kỹ thuật hoặc lịch sử xu hướng giá của một mã cổ phiếu cụ thể."""
+    return f"[SYSTEM CHART COMMAND] Kích hoạt cấu trúc lệnh dựng đồ thị tương tác nội bộ cho mã: {ticker}."
+
 # ==========================================
 # 2. KHỞI TẠO BỘ NHỚ TRUNG TÂM
 # ==========================================
@@ -259,6 +264,7 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
 
                 client = genai.Client(api_key=API_KEY)
                 
+                # CẬP NHẬT KỶ LUẬT THÉP BỔ SUNG YÊU CẦU VẼ ĐỒ THỊ
                 sys_prompt = """
                 Bạn là Bậc thầy Phân tích Định lượng và Cố vấn Giao dịch cấp tổ chức tại LINANCE Terminal.
                 MỤC TIÊU CỐT LÕI: Loại bỏ hoàn toàn các nhận định chung chung, nước đôi. Mọi tư vấn phải sắc bén, mang tính quyết đoán và có thể giao dịch ngay (Actionable Trading Plan).
@@ -277,12 +283,14 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
 
                 4. KIỂM CHỨNG REAL-TIME: Bắt buộc dùng `get_live_stock_data` để cập nhật giá hiện tại trước khi đưa ra bất kỳ con số nào cho Điểm Mua. Không bao giờ dùng giá chốt phiên hôm qua để làm giá Entry cho hôm nay.
 
-                5. VĂN PHONG VÀ TRÌNH BÀY:
+                5. TRIỆU HỒI ĐỒ THỊ: Khi người dùng yêu cầu xem đồ thị, biểu đồ kỹ thuật hoặc lịch sử xu hướng giá, BẮT BUỘC phải sử dụng công cụ `draw_technical_chart` để hệ thống tự động vẽ biểu đồ trực quan.
+
+                6. VĂN PHONG VÀ TRÌNH BÀY:
                    - Sử dụng ngôn ngữ tài chính chuyên nghiệp, lạnh lùng và dứt khoát.
                    - Tuyệt đối KHÔNG sử dụng biểu tượng cảm xúc (emoji).
                    - Trình bày rõ ràng bằng các gạch đầu dòng (bullet points) và bôi đậm các mức giá quan trọng.
 
-                6. MIỄN TRỪ TRÁCH NHIỆM: Ở cuối mọi câu trả lời, luôn chèn chính xác văn bản: "*Miễn trừ trách nhiệm: Kế hoạch giao dịch trên được tổng hợp từ thuật toán định lượng và dữ liệu thị trường hiện hành, nhà đầu tư tự quản trị rủi ro đối với quyết định giải ngân.*"
+                7. MIỄN TRỪ TRÁCH NHIỆM: Ở cuối mọi câu trả lời, luôn chèn chính xác văn bản: "*Miễn trừ trách nhiệm: Kế hoạch giao dịch trên được tổng hợp từ thuật toán định lượng và dữ liệu thị trường hiện hành, nhà đầu tư tự quản trị rủi ro đối với quyết định giải ngân.*"
                 """
                 
                 full_prompt = f"{sys_prompt}\n\nKHO DỮ LIỆU NỘI BỘ:\n{data_context}\n\nTRUY VẤN: {prompt}"
@@ -292,7 +300,8 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                     contents=full_prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.2,
-                        tools=[search_internet, get_live_stock_data] 
+                        # ĐÃ NẠP THÊM KIẾM MỚI VÀO KHO VŨ KHÍ
+                        tools=[search_internet, get_live_stock_data, draw_technical_chart] 
                     )
                 )
                 
@@ -309,11 +318,32 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                             query = tool_call.args.get("query", prompt)
                             st.caption(f"Hệ thống đang truy xuất dữ liệu Internet: '{query}'...")
                             result_text = search_internet(query)
+                            
                         elif tool_call.name == "get_live_stock_data":
                             ticker = tool_call.args.get("ticker", "")
                             st.caption(f"Hệ thống đang cập nhật dữ liệu Real-time mã: {ticker}...")
                             result_text = get_live_stock_data(ticker)
                             
+                        # XỬ LÝ LỆNH VẼ ĐỒ THỊ TẠI ĐÂY
+                        elif tool_call.name == "draw_technical_chart":
+                            ticker = tool_call.args.get("ticker", "").strip().upper()
+                            st.caption(f"Hệ thống đang truy xuất lịch sử giá và dựng đồ thị tương tác mã: {ticker}...")
+                            
+                            import yfinance as yf
+                            try:
+                                yf_ticker = f"{ticker}.VN" if not ticker.endswith(".VN") else ticker
+                                stock = yf.Ticker(yf_ticker)
+                                hist_data = stock.history(period="3mo")
+                                if not hist_data.empty:
+                                    # Ép cấu trúc chuỗi thời gian để dựng đồ thị tương tác cục bộ trong khung chat
+                                    chart_df = hist_data[['Close']].copy()
+                                    st.line_chart(chart_df)
+                                    result_text = f"[SYSTEM] Đồ thị xu hướng giá 3 tháng gần nhất của {ticker} đã được hiển thị trực tiếp trên giao diện dòng lệnh. Hãy đưa ra kết luận phân tích."
+                                else:
+                                    result_text = f"[SYSTEM CẢNH BÁO] Không tìm thấy dữ liệu giá lịch sử của mã {ticker} trên máy chủ yfinance."
+                            except Exception as chart_err:
+                                result_text = f"[SYSTEM FAULT] Thất bại khi dựng đồ thị kỹ thuật: {chart_err}"
+                                
                         tool_response_parts.append(
                             types.Part.from_function_response(
                                 name=tool_call.name, 

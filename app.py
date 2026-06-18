@@ -154,18 +154,23 @@ def get_live_stock_data(ticker: str) -> str:
         ticker = ticker.strip().upper()
         yf_ticker = f"{ticker}.VN" if not ticker.endswith(".VN") else ticker
         stock = yf.Ticker(yf_ticker)
+        
         current_price = stock.fast_info['lastPrice']
         if current_price < 1000: current_price *= 1000
-        return f"[SYSTEM REAL-TIME UPDATE] Mức giá hiện tại của {ticker} là: {current_price:,.0f} VNĐ."
+        
+        # TÍNH TOÁN KHỐI LƯỢNG ĐỘT BIẾN REAL-TIME
+        hist = stock.history(period="1mo")
+        if not hist.empty and len(hist) > 0:
+            current_vol = hist['Volume'].iloc[-1]
+            avg_vol_20 = hist['Volume'].mean()
+            surge_ratio = (current_vol / avg_vol_20) * 100 if avg_vol_20 > 0 else 0
+            vol_info = f"Khối lượng phiên nay: {current_vol:,.0f} | KL Trung bình 20 phiên: {avg_vol_20:,.0f} | Mức độ đột biến: {surge_ratio:.1f}%"
+        else:
+            vol_info = "Không trích xuất được dữ liệu khối lượng."
+            
+        return f"[SYSTEM REAL-TIME UPDATE] Mã: {ticker} | Giá: {current_price:,.0f} VNĐ | {vol_info}."
     except Exception as e:
         return f"Hệ thống không thể truy xuất dữ liệu realtime cho {ticker}. Lỗi: {e}"
-
-def draw_technical_chart(ticker: str) -> str:
-    """MUST call this tool to execute Python code that draws the interactive line chart for the stock when user asks for 'đồ thị', 'biểu đồ', 'chart'.
-    Args:
-        ticker: The 3-letter stock symbol (e.g., HPG, SSI)
-    """
-    return f"[SYSTEM CHART COMMAND TRIGGERED] Hãy xác nhận bằng văn bản rằng đồ thị kỹ thuật mã {ticker} đang được hiển thị ngay bên dưới đoạn hội thoại."
 
 # ==========================================
 # 2. KHỞI TẠO BỘ NHỚ TRUNG TÂM
@@ -226,14 +231,12 @@ with st.sidebar:
 # 5. TRUNG TÂM XỬ LÝ CHATBOT AI AGENT
 # ==========================================
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Hệ thống phân tích đã sẵn sàng tiếp nhận truy vấn."}]
+    st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Hệ thống phân tích đã sẵn sàng tiếp nhận truy vấn. Tính năng soi Đột biến Khối lượng đã được kích hoạt."}]
 
-# HIỂN THỊ LẠI LỊCH SỬ CHAT VÀ ĐỒ THỊ ĐÃ LƯU
+# HIỂN THỊ LẠI LỊCH SỬ CHAT
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-        if "chart" in message and message["chart"] is not None:
-            st.line_chart(message["chart"])
 
 if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân tích..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -241,28 +244,28 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        chart_data_to_save = None # Biến bảo chứng đồ thị
-        
         with st.spinner("ĐANG XỬ LÝ TRUY VẤN..."):
             try:
                 data_context = ""
                 for sheet_name, df_sheet in dict_dfs.items():
                     if not df_sheet.empty:
+                        df_clean = df_sheet.copy().round(2)
                         if sheet_name == "RS_DATA":
-                            essential_cols = [c for c in ['Mã CK', 'Ngành', 'Giá', 'RS_1M', 'Tech_Score', 'Trạng Thái', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ'] if c in df_sheet.columns]
+                            # ĐÃ BỔ SUNG CỘT KL_TB_20 VÀ Đột_Biến_KL VÀO CẤU TRÚC NGỮ CẢNH AI
+                            essential_cols = [c for c in ['Mã CK', 'Ngành', 'Giá', 'RS_1M', 'KL_TB_20', 'Đột_Biến_KL', 'Tech_Score', 'Trạng Thái', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ'] if c in df_clean.columns]
                             if essential_cols: 
-                                data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet[essential_cols].head(200).to_csv(index=False)}\n\n"
+                                data_context += f"--- DATASET: {sheet_name} ---\n{df_clean[essential_cols].head(200).to_csv(index=False)}\n\n"
                             else: 
-                                data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
+                                data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
                                 
                         elif sheet_name == "TA_DATA":
-                            ta_cols = [c for c in ['Mã CK', 'Giá Hiện Tại', 'Tenkan_sen (9)', 'Kijun_sen (26)', 'Senkou_A (Mây)', 'Senkou_B (Mây)', 'Trạng Thái Mây', 'Tín Hiệu Kumo'] if c in df_sheet.columns]
+                            ta_cols = [c for c in ['Mã CK', 'Giá Hiện Tại', 'Tenkan_sen (9)', 'Kijun_sen (26)', 'Senkou_A (Mây)', 'Senkou_B (Mây)', 'Trạng Thái Mây', 'Tín Hiệu Kumo'] if c in df_clean.columns]
                             if ta_cols: 
-                                data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet[ta_cols].head(200).to_csv(index=False)}\n\n"
+                                data_context += f"--- DATASET: {sheet_name} ---\n{df_clean[ta_cols].head(200).to_csv(index=False)}\n\n"
                             else: 
-                                data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
+                                data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
                         else:
-                            data_context += f"--- DATASET: {sheet_name} ---\n{df_sheet.head(200).to_csv(index=False)}\n\n"
+                            data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
 
                 st.caption(f"Dữ liệu hệ thống đã nạp: {', '.join(dict_dfs.keys())}")
 
@@ -270,16 +273,20 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                 
                 sys_prompt = """
                 Bạn là Bậc thầy Phân tích Định lượng và Cố vấn Giao dịch cấp tổ chức tại LINANCE Terminal.
-                MỤC TIÊU CỐT LÕI: Loại bỏ hoàn toàn các nhận định chung chung. Mọi tư vấn phải sắc bén, quyết đoán và có kế hoạch giao dịch Actionable Trading Plan.
+                MỤC TIÊU CỐT LÕI: Đưa ra Kế hoạch Giao dịch (Actionable Trading Plan) quyết đoán. Tuyệt đối không nhận định nước đôi.
 
                 NGUYÊN TẮC HOẠT ĐỘNG:
-                1. QUÉT BÙNG NỔ KHỐI LƯỢNG & TỔNG QUAN: Tìm mã có RS_1M cao và MFI_14 lớn.
-                2. KẾ HOẠCH GIAO DỊCH: Trình bày cấu trúc: LUẬN ĐIỂM, VÙNG MUA, ĐIỂM CẮT LỖ, ĐIỂM CHỐT LỜI, TỶ LỆ R:R.
+                1. ĐỘT BIẾN KHỐI LƯỢNG LÀ TÍN HIỆU CỐT LÕI: Khi phân tích, luôn chú ý đến sự đột biến khối lượng (Đột_Biến_KL hoặc dữ liệu Real-time). Nếu mức độ đột biến > 150%, xác nhận đây là dấu vết của dòng tiền lớn (Smart Money).
+                2. KẾ HOẠCH GIAO DỊCH: BẮT BUỘC trình bày theo cấu trúc: 
+                   - LUẬN ĐIỂM (Tập trung vào sự xác nhận của khối lượng và giá).
+                   - VÙNG MUA (Entry Range).
+                   - ĐIỂM CẮT LỖ CỨNG (Stop-loss).
+                   - ĐIỂM CHỐT LỜI (Take-profit).
+                   - TỶ LỆ R:R.
                 3. BÁO CÁO TỔ CHỨC: Gọi `search_internet` tìm báo cáo phân tích mới nhất.
-                4. KIỂM CHỨNG REAL-TIME: Gọi `get_live_stock_data` lấy giá cập nhật.
-                5. TRIỆU HỒI ĐỒ THỊ: Khi có yêu cầu xem "đồ thị", "biểu đồ", BẮT BUỘC gọi hàm `draw_technical_chart` trên hệ thống API. KHÔNG ĐƯỢC TỰ BỊA RA VĂN BẢN NÓI RẰNG ĐÃ VẼ KHI CHƯA GỌI HÀM.
-                6. VĂN PHONG VÀ TRÌNH BÀY: Chuyên nghiệp, lạnh lùng. Tuyệt đối KHÔNG dùng emoji.
-                7. MIỄN TRỪ TRÁCH NHIỆM: Ở cuối câu trả lời, luôn chèn chính xác: "*Miễn trừ trách nhiệm: Kế hoạch giao dịch trên được tổng hợp từ thuật toán định lượng và dữ liệu thị trường hiện hành, nhà đầu tư tự quản trị rủi ro đối với quyết định giải ngân.*"
+                4. KIỂM CHỨNG REAL-TIME: Luôn gọi `get_live_stock_data` để cập nhật giá và XÁC NHẬN KHỐI LƯỢNG TRONG NGÀY.
+                5. VĂN PHONG VÀ TRÌNH BÀY: Chuyên nghiệp, lạnh lùng, định lượng. Tuyệt đối KHÔNG dùng emoji.
+                6. MIỄN TRỪ TRÁCH NHIỆM: Cuối câu trả lời luôn có: "*Miễn trừ trách nhiệm: Kế hoạch giao dịch trên được tổng hợp từ thuật toán định lượng và dữ liệu thị trường hiện hành, nhà đầu tư tự quản trị rủi ro đối với quyết định giải ngân.*"
                 """
                 
                 full_prompt = f"{sys_prompt}\n\nKHO DỮ LIỆU NỘI BỘ:\n{data_context}\n\nTRUY VẤN: {prompt}"
@@ -289,13 +296,10 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                     contents=full_prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.2,
-                        tools=[search_internet, get_live_stock_data, draw_technical_chart] 
+                        tools=[search_internet, get_live_stock_data] 
                     )
                 )
                 
-                # Biến cờ theo dõi xem AI có thực sự gọi lệnh vẽ biểu đồ không
-                chart_triggered = False
-
                 if response.function_calls:
                     messages_for_ai = [
                         types.Content(role="user", parts=[types.Part.from_text(full_prompt)]),
@@ -312,30 +316,8 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                             
                         elif tool_call.name == "get_live_stock_data":
                             ticker = tool_call.args.get("ticker", "")
-                            st.caption(f"Hệ thống đang lấy giá Real-time mã: {ticker}...")
+                            st.caption(f"Hệ thống đang lấy giá và khối lượng Real-time mã: {ticker}...")
                             result_text = get_live_stock_data(ticker)
-                            
-                        elif tool_call.name == "draw_technical_chart":
-                            ticker = tool_call.args.get("ticker", "").strip().upper()
-                            chart_triggered = True
-                            st.caption(f"Hệ thống đang kết nối API đồ thị mã: {ticker}...")
-                            
-                            try:
-                                import yfinance as yf
-                                yf_ticker = f"{ticker}.VN" if not ticker.endswith(".VN") else ticker
-                                stock = yf.Ticker(yf_ticker)
-                                hist_data = stock.history(period="6mo")
-                                if not hist_data.empty:
-                                    chart_df = hist_data[['Close']].copy()
-                                    chart_df.rename(columns={'Close': f'Giá {ticker}'}, inplace=True)
-                                    # CHỐT CHẶN 1: Gỡ múi giờ quốc tế để tránh Streamlit đâm lỗi ngầm
-                                    chart_df.index = chart_df.index.tz_localize(None) 
-                                    chart_data_to_save = chart_df
-                                    result_text = "[SYSTEM] Đã nhận được mảng dữ liệu. Hãy trả lời người dùng."
-                                else:
-                                    result_text = f"[SYSTEM CẢNH BÁO] Không tìm thấy lịch sử giá {ticker}."
-                            except Exception as chart_err:
-                                result_text = f"[SYSTEM FAULT] Lỗi: {chart_err}"
                                 
                         tool_response_parts.append(
                             types.Part.from_function_response(
@@ -351,26 +333,6 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                         config=types.GenerateContentConfig(temperature=0.2)
                     )
             
-                # CHỐT CHẶN 2 (CƯỠNG CHẾ): Nếu AI lười biếng ảo giác, Python sẽ tự bóc mã CK và tự vẽ đồ thị!
-                if chart_data_to_save is None and ("đồ thị" in prompt.lower() or "biểu đồ" in prompt.lower() or "chart" in prompt.lower()):
-                    match = re.search(r'\b[A-Z]{3}\b', prompt.upper())
-                    fallback_ticker = match.group(0) if match else (rpg_ticker if rpg_ticker else None)
-                    
-                    if fallback_ticker:
-                        st.caption(f"[CƯỠNG CHẾ] Khởi động thuật toán vẽ đồ thị thủ công cho {fallback_ticker}...")
-                        import yfinance as yf
-                        try:
-                            yf_ticker = f"{fallback_ticker}.VN" if not fallback_ticker.endswith(".VN") else fallback_ticker
-                            stock = yf.Ticker(yf_ticker)
-                            hist_data = stock.history(period="6mo")
-                            if not hist_data.empty:
-                                chart_df = hist_data[['Close']].copy()
-                                chart_df.rename(columns={'Close': f'Giá {fallback_ticker}'}, inplace=True)
-                                chart_df.index = chart_df.index.tz_localize(None)
-                                chart_data_to_save = chart_df
-                        except:
-                            pass
-
             except Exception as e:
                 st.error(f"SYSTEM FAULT: {e}")
                 response = None
@@ -379,11 +341,5 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
         if response:
             st.markdown(response.text)
             
-            if chart_data_to_save is not None:
-                st.line_chart(chart_data_to_save)
-                
             # Lưu lại ngữ cảnh vào bộ nhớ hệ thống
-            new_msg = {"role": "assistant", "content": response.text}
-            if chart_data_to_save is not None:
-                new_msg["chart"] = chart_data_to_save
-            st.session_state.messages.append(new_msg)
+            st.session_state.messages.append({"role": "assistant", "content": response.text})

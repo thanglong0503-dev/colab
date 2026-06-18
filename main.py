@@ -39,10 +39,16 @@ def process_ticker(ticker, industry, start_date, end_date):
         volume = df['volume']
         
         close_price = float(close.iloc[-1])
-        avg_value = (volume.tail(20).mean() * close_price) / 1e6 
+        vol_last_20 = volume.tail(20)
+        avg_value = (vol_last_20.mean() * close_price) / 1e6 
         
         if avg_value < (MIN_LIQUIDITY * 1000) or close_price < MIN_PRICE: return None 
-        if (volume.tail(20) == 0).sum() > 3: return None
+        if (vol_last_20 == 0).sum() > 3: return None
+
+        # --- TÍNH TOÁN ĐỘT BIẾN KHỐI LƯỢNG ---
+        current_vol = float(volume.iloc[-1])
+        avg_vol_20 = float(vol_last_20.mean())
+        surge_ratio = round((current_vol / avg_vol_20) * 100, 2) if avg_vol_20 > 0 else 0.0
 
         # 2. CHẤM ĐIỂM KỸ THUẬT
         ma5 = close.rolling(5).mean().iloc[-1]
@@ -160,7 +166,9 @@ def process_ticker(ticker, industry, start_date, end_date):
             "Open": float(df['open'].iloc[-1]),
             "High": float(high.iloc[-1]),
             "Low": float(low.iloc[-1]),
-            "Volume": float(volume.iloc[-1]),
+            "Volume": current_vol,
+            "KL_TB_20": avg_vol_20,      # CỘT MỚI
+            "Đột_Biến_KL": surge_ratio,  # CỘT MỚI (%)
             "RSI_14": round(rsi_val, 2),
             "MFI_14": round(mfi_val, 2),
             "MACD_Hist": round(macd_val - signal_val, 3),
@@ -202,10 +210,10 @@ def main():
         df_final['RS_1M'] = (df_final['RS_1M'].rank(pct=True) * 99).astype(int) + 1
         df_final['RS_3M'] = (df_final['RS_3M'].rank(pct=True) * 99).astype(int) + 1
         
-        # 1. LỌC CỘT CHO RS_DATA
+        # 1. LỌC CỘT CHO RS_DATA ĐÃ BỔ SUNG KHỐI LƯỢNG
         final_rs_columns = ['Mã CK', 'Ngành', 'RS_1M', 'RS_3M', 'Tech_Score', 'Trạng Thái', 'Thanh_Khoản_Tỷ', 'Giá', 
                             'Vốn Hóa', 'P/E', 'P/B', 'ROE (%)', 'Nợ/Vốn Chủ', 
-                            'Open', 'High', 'Low', 'Volume', 'RSI_14', 'MFI_14', 'MACD_Hist']
+                            'Open', 'High', 'Low', 'Volume', 'KL_TB_20', 'Đột_Biến_KL', 'RSI_14', 'MFI_14', 'MACD_Hist']
         df_rs_up = df_final[final_rs_columns].fillna("")
         
         # 2. LỌC CỘT CHO TA_DATA (Phân tích kỹ thuật)

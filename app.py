@@ -8,6 +8,8 @@ import re
 import streamlit.components.v1 as components
 import base64
 from datetime import datetime
+import matplotlib.pyplot as plt
+import io
 
 # ==========================================
 # CẤU HÌNH GIAO DIỆN CHÍNH
@@ -15,46 +17,97 @@ from datetime import datetime
 st.set_page_config(page_title="LINANCE TERMINAL", page_icon="CORE", layout="centered")
 
 # ==========================================
-# 1. KHAI BÁO CÁC HÀM TIỆN ÍCH, UI & AI SKILLS
+# 1. LÕI KỸ THUẬT: VẼ ĐỒ THỊ NẾN & MÃ HÓA BASE64
+# ==========================================
+def generate_chart_base64(ticker: str, df_ta: pd.DataFrame):
+    """Hàm vẽ đồ thị nến Nhật 30 phiên và ghim các mốc chiến thuật, trả về mã Base64."""
+    import yfinance as yf
+    try:
+        # 1. Lấy dữ liệu 30 phiên gần nhất
+        yf_ticker = f"{ticker}.VN" if not ticker.endswith(".VN") else ticker
+        stock = yf.Ticker(yf_ticker)
+        hist = stock.history(period="45d").tail(30) # Lấy dư để chốt đúng 30 nến
+        
+        if hist.empty:
+            return ""
+
+        # 2. Lấy dữ liệu TA để kẻ mốc chiến thuật
+        tenkan_val, kijun_val = None, None
+        if df_ta is not None and not df_ta.empty and ticker in df_ta['Mã CK'].values:
+            ta_data = df_ta[df_ta['Mã CK'] == ticker].iloc[0].to_dict()
+            tenkan_val = float(ta_data.get('Tenkan_sen', 0))
+            kijun_val = float(ta_data.get('Kijun_sen', 0))
+
+        # 3. Khởi tạo Figure Matplotlib
+        plt.style.use('dark_background')
+        fig, ax = plt.subplots(figsize=(8, 4), dpi=150)
+        fig.patch.set_facecolor('#0B0F17')
+        ax.set_facecolor('#0B0F17')
+
+        # 4. Vẽ biểu đồ nến thủ công
+        x_indices = range(len(hist))
+        for i in x_indices:
+            row = hist.iloc[i]
+            color = '#10B981' if row['Close'] >= row['Open'] else '#EF4444' # Xanh/Đỏ
+            # Vẽ râu nến (Shadow)
+            ax.plot([i, i], [row['Low'], row['High']], color=color, linewidth=1)
+            # Vẽ thân nến (Body)
+            body_bottom = min(row['Open'], row['Close'])
+            body_top = max(row['Open'], row['Close'])
+            body_height = max(body_top - body_bottom, 0.001) # Tránh nến Doji bị ẩn
+            ax.add_patch(plt.Rectangle((i - 0.3, body_bottom), 0.6, body_height, facecolor=color, edgecolor=color))
+
+        # 5. Kẻ các đường mốc chiến thuật (Từ TA_DATA)
+        current_price = hist['Close'].iloc[-1]
+        ax.axhline(y=current_price, color='#0A84FF', linestyle='-', linewidth=1.5, alpha=0.8, label=f'Giá hiện tại: {current_price:,.0f}')
+        
+        if tenkan_val and tenkan_val > 0:
+            ax.axhline(y=tenkan_val, color='#F59E0B', linestyle='--', linewidth=1.2, alpha=0.8, label=f'Hỗ trợ (Tenkan): {tenkan_val:,.0f}')
+        if kijun_val and kijun_val > 0:
+            ax.axhline(y=kijun_val, color='#EF4444', linestyle='-.', linewidth=1.2, alpha=0.8, label=f'Cắt lỗ cứng (Kijun): {kijun_val:,.0f}')
+
+        # 6. Tinh chỉnh giao diện đồ thị
+        ax.set_title(f"Hành vi giá 30 phiên & Các mốc chiến thuật - {ticker}", color='white', pad=15, fontsize=12, fontfamily='monospace')
+        ax.legend(loc='upper left', fontsize=8, facecolor='#1C2635', edgecolor='none')
+        ax.grid(True, color='white', alpha=0.05)
+        ax.set_xticks(x_indices[::5]) # Hiện ngày cách nhau 5 phiên
+        ax.set_xticklabels([hist.index[i].strftime('%d/%m') for i in x_indices[::5]], rotation=45, color='gray', fontsize=8)
+        ax.tick_params(axis='y', colors='gray', labelsize=8)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_color('#333333')
+        ax.spines['bottom'].set_color('#333333')
+        
+        plt.tight_layout()
+
+        # 7. Xuất ra luồng Base64
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight')
+        plt.close(fig)
+        buf.seek(0)
+        img_b64 = base64.b64encode(buf.read()).decode('utf-8')
+        return f"data:image/png;base64,{img_b64}"
+    except Exception as e:
+        return ""
+
+# ==========================================
+# 2. KHAI BÁO CÁC HÀM TIỆN ÍCH, UI & AI SKILLS
 # ==========================================
 def render_copy_button(text_to_copy):
-    """Hàm tạo nút sao chép bằng HTML/JS nhúng, sử dụng TextDecoder để bảo toàn Tiếng Việt."""
     text_b64 = base64.b64encode(text_to_copy.encode('utf-8')).decode('utf-8')
     html_code = f"""
     <body style="margin: 0; padding: 0; overflow: hidden; background-color: transparent;">
         <style>
-        .copy-btn {{
-            background-color: transparent;
-            color: #0A84FF;
-            border: 1px solid rgba(10, 132, 255, 0.5);
-            border-radius: 6px;
-            padding: 6px 12px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 11px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-        }}
-        .copy-btn:hover {{
-            background-color: #0A84FF;
-            color: #FFFFFF;
-            box-shadow: 0 0 10px rgba(10, 132, 255, 0.4);
-            border: 1px solid #0A84FF;
-        }}
+        .copy-btn {{ background-color: transparent; color: #0A84FF; border: 1px solid rgba(10, 132, 255, 0.5); border-radius: 6px; padding: 6px 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; display: inline-flex; align-items: center; justify-content: center; }}
+        .copy-btn:hover {{ background-color: #0A84FF; color: #FFFFFF; box-shadow: 0 0 10px rgba(10, 132, 255, 0.4); border: 1px solid #0A84FF; }}
         </style>
         <button class="copy-btn" id="copyBtn">COPY PLAN</button>
         <script>
         document.getElementById("copyBtn").addEventListener("click", function() {{
             const binaryString = window.atob('{text_b64}');
             const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {{
-                bytes[i] = binaryString.charCodeAt(i);
-            }}
+            for (let i = 0; i < binaryString.length; i++) {{ bytes[i] = binaryString.charCodeAt(i); }}
             const decodedText = new TextDecoder('utf-8').decode(bytes);
-            
             navigator.clipboard.writeText(decodedText).then(function() {{
                 document.getElementById("copyBtn").innerText = "✅ COPIED!";
                 setTimeout(() => document.getElementById("copyBtn").innerText = "COPY PLAN", 2000);
@@ -65,21 +118,36 @@ def render_copy_button(text_to_copy):
     """
     return html_code
 
-def render_pdf_button(ai_content, ticker_name):
-    """Render file PDF nhúng Font Roboto chuẩn Google để không vỡ Font Tiếng Việt."""
+def render_pdf_button(ai_content, ticker_name, dict_dfs):
+    """Render file PDF nhúng Font Roboto và NHÚNG ĐỒ THỊ KỸ THUẬT."""
     current_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     html_content = ai_content.replace('\n', '<br>').replace('**', '<b>')
     html_content = re.sub(r'\*(.*?)\*', r'<i>\1</i>', html_content)
     
-    # Mã HTML của báo cáo chuẩn (Đã nhúng Font Roboto)
+    # Tạo mã Base64 cho biểu đồ
+    df_ta = dict_dfs.get("TA_DATA", None) if dict_dfs else None
+    chart_base64 = generate_chart_base64(ticker_name, df_ta)
+    
+    # Chèn thẻ <img> nếu biểu đồ được tạo thành công
+    chart_html = ""
+    if chart_base64:
+        chart_html = f"""
+        <div style="margin: 20px 0; text-align: center; background: #0B0F17; padding: 15px; border-radius: 10px; border: 1px solid #333;">
+            <img src="{chart_base64}" style="max-width: 100%; height: auto; border-radius: 8px;">
+        </div>
+        """
+    
     raw_report_html = f"""
     <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,700;1,400&subset=vietnamese&display=swap" rel="stylesheet">
     <div style="font-family: 'Roboto', sans-serif; padding: 40px; color: #333; line-height: 1.6; background-color: white;">
-        <div style="border-bottom: 2px solid #0A84FF; padding-bottom: 10px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: baseline;">
+        <div style="border-bottom: 2px solid #0A84FF; padding-bottom: 10px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: baseline;">
             <div style="font-size: 24px; font-weight: 900; color: #0B0F17;">LINANCE<span style="color: #0A84FF;">.CORE</span></div>
             <div style="font-size: 12px; color: #666; font-family: monospace;">Issued: {current_time}</div>
         </div>
-        <div style="font-size: 14px; text-align: justify;">
+        
+        {chart_html}
+        
+        <div style="font-size: 14px; text-align: justify; margin-top: 20px;">
             {html_content}
         </div>
         <div style="margin-top: 50px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 10px; color: #999; text-align: center; font-style: italic;">
@@ -89,7 +157,6 @@ def render_pdf_button(ai_content, ticker_name):
     </div>
     """
     
-    # Mã hóa để truyền vào JS an toàn
     b64_html = base64.b64encode(raw_report_html.encode('utf-8')).decode('utf-8')
     file_name = f"LINANCE_{ticker_name}_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf"
     
@@ -97,39 +164,16 @@ def render_pdf_button(ai_content, ticker_name):
     <body style="margin: 0; padding: 0; overflow: hidden; background-color: transparent;">
         <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
         <style>
-        .pdf-btn {{
-            background-color: transparent;
-            color: #10B981;
-            border: 1px solid rgba(16, 185, 129, 0.5);
-            border-radius: 6px;
-            padding: 6px 12px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 11px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-        }}
-        .pdf-btn:hover {{
-            background-color: #10B981;
-            color: #FFFFFF;
-            box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
-            border: 1px solid #10B981;
-        }}
+        .pdf-btn {{ background-color: transparent; color: #10B981; border: 1px solid rgba(16, 185, 129, 0.5); border-radius: 6px; padding: 6px 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; display: inline-flex; align-items: center; justify-content: center; }}
+        .pdf-btn:hover {{ background-color: #10B981; color: #FFFFFF; box-shadow: 0 0 10px rgba(16, 185, 129, 0.4); border: 1px solid #10B981; }}
         </style>
         <button class="pdf-btn" id="dlPdfBtn" onclick="exportPDF()">EXPORT PDF</button>
         <script>
         function exportPDF() {{
             document.getElementById("dlPdfBtn").innerText = "⏳ GENERATING...";
-            
-            // Giải mã TextDecoder mạnh mẽ bảo toàn Unicode
             const binaryString = window.atob('{b64_html}');
             const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {{
-                bytes[i] = binaryString.charCodeAt(i);
-            }}
+            for (let i = 0; i < binaryString.length; i++) {{ bytes[i] = binaryString.charCodeAt(i); }}
             const decodedHtml = new TextDecoder('utf-8').decode(bytes);
             
             const tempDiv = document.createElement('div');
@@ -143,13 +187,12 @@ def render_pdf_button(ai_content, ticker_name):
               jsPDF:        {{ unit: 'in', format: 'a4', orientation: 'portrait' }}
             }};
             
-            // Đợi Font Roboto load xong mới render PDF
             setTimeout(() => {{
                 html2pdf().set(opt).from(tempDiv).save().then(function() {{
                     document.getElementById("dlPdfBtn").innerText = "✅ DOWNLOADED!";
                     setTimeout(() => document.getElementById("dlPdfBtn").innerText = "EXPORT PDF", 3000);
                 }});
-            }}, 500); // 500ms delay for font loading
+            }}, 500);
         }}
         </script>
     </body>
@@ -176,7 +219,7 @@ def load_all_sheets():
         return {}
 
 # ==========================================
-# 2. HÀM GIAO DIỆN HỒ SƠ SỨC KHỎE ĐÃ ĐỒNG BỘ ĐỊNH DẠNG
+# 3. HÀM GIAO DIỆN HỒ SƠ SỨC KHỎE
 # ==========================================
 def render_rpg_card(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame = None):
     stock_rs = df_rs[df_rs['Mã CK'] == ticker]
@@ -314,17 +357,16 @@ def get_live_stock_data(ticker: str) -> str:
         return f"Hệ thống không thể truy xuất dữ liệu realtime cho {ticker}. Lỗi: {e}"
 
 def draw_technical_chart(ticker: str) -> str:
-    """MUST call this tool to execute Python code that draws the interactive line chart for the stock when user asks for 'đồ thị', 'biểu đồ', 'chart'."""
     return f"[SYSTEM CHART COMMAND TRIGGERED] Hãy xác nhận bằng văn bản rằng đồ thị kỹ thuật mã {ticker} đang được hiển thị ngay bên dưới đoạn hội thoại."
 
 # ==========================================
-# 3. KHỞI TẠO BỘ NHỚ TRUNG TÂM
+# 4. KHỞI TẠO BỘ NHỚ TRUNG TÂM
 # ==========================================
 dict_dfs = load_all_sheets()
 API_KEY = st.secrets["GEMINI_API_KEY"]
 
 # ==========================================
-# 4. GIAO DIỆN CHÍNH & CSS
+# 5. GIAO DIỆN CHÍNH & CSS
 # ==========================================
 st.markdown("""
 <style>
@@ -348,7 +390,7 @@ st.markdown("""
 st.markdown("<div class='main-header'><h1>LINANCE TERMINAL</h1><p>SYS.CORE // AI QUANTITATIVE ANALYSIS</p></div>", unsafe_allow_html=True)
 
 # ==========================================
-# 5. BẢNG ĐIỀU KHIỂN HỆ THỐNG (SIDEBAR)
+# 6. BẢNG ĐIỀU KHIỂN HỆ THỐNG (SIDEBAR)
 # ==========================================
 with st.sidebar:
     st.markdown("### HỆ THỐNG ĐIỀU KHIỂN")
@@ -373,12 +415,11 @@ with st.sidebar:
             st.error("Lỗi truy xuất: Chưa tải được dữ liệu hệ thống.")
 
 # ==========================================
-# 6. TRUNG TÂM XỬ LÝ CHATBOT AI AGENT
+# 7. TRUNG TÂM XỬ LÝ CHATBOT AI AGENT
 # ==========================================
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Hệ thống đã kích hoạt Lõi Quản trị Vốn (Position Sizing) và Trạm Xuất Bản. Hãy nhập truy vấn của Ngài."}]
+    st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Hệ thống xuất bản biểu đồ nến Tự động đã vào trạng thái trực chiến."}]
 
-# HIỂN THỊ LẠI LỊCH SỬ CHAT VỚI CÁC NÚT ĐIỀU KHIỂN ĐỘC LẬP
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -391,11 +432,11 @@ for message in st.session_state.messages:
             with col_btn1:
                 components.html(render_copy_button(message["content"]), height=35)
             with col_btn2:
-                ticker_match = re.search(r'\[([A-Z0-9]{3,4})\]', message["content"])
-                ticker_name = ticker_match.group(1) if ticker_match else "STOCK"
-                components.html(render_pdf_button(message["content"], ticker_name), height=35)
+                ticker_match = re.search(r'\b[A-Z]{3}\b', message["content"])
+                ticker_name = ticker_match.group(0) if ticker_match else "STOCK"
+                components.html(render_pdf_button(message["content"], ticker_name, dict_dfs), height=35)
 
-if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG, NAV 1 tỷ, rủi ro 2%)..."):
+if prompt := st.chat_input("Nhập mã CK hoặc truy vấn..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -403,7 +444,7 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG
     with st.chat_message("assistant"):
         chart_data_to_save = None 
         
-        with st.spinner("ĐANG XỬ LÝ TRUY VẤN VÀ QUẢN TRỊ RỦI RO..."):
+        with st.spinner("ĐANG XỬ LÝ TRUY VẤN VÀ VẼ ĐỒ THỊ..."):
             try:
                 data_context = ""
                 for sheet_name, df_sheet in dict_dfs.items():
@@ -435,9 +476,9 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG
                 MỤC TIÊU CỐT LÕI: Đưa ra Kế hoạch Giao dịch (Actionable Trading Plan) quyết đoán. Tuyệt đối không nhận định nước đôi.
 
                 NGUYÊN TẮC HOẠT ĐỘNG:
-                1. ĐỘT BIẾN KHỐI LƯỢNG LÀ TÍN HIỆU CỐT LÕI: Luôn kiểm tra sự đột biến khối lượng (Đột_Biến_KL hoặc dữ liệu Real-time). Mức độ đột biến > 150% xác nhận dòng tiền lớn.
+                1. ĐỘT BIẾN KHỐI LƯỢNG LÀ TÍN HIỆU CỐT LÕI: Luôn kiểm tra sự đột biến khối lượng (Đột_Biến_KL hoặc dữ liệu Real-time).
                 2. PHÂN TÍCH KỸ THUẬT & ICHIMOKU: Bắt buộc đối chiếu sự đồng thuận của hệ thống Ichimoku từ bảng TA_DATA để củng cố luận điểm.
-                3. QUẢN TRỊ VỐN (POSITION SIZING): NẾU người dùng cung cấp quy mô vốn (NAV) và mức rủi ro chấp nhận (Ví dụ: NAV 1 tỷ, rủi ro 2%), BẮT BUỘC thiết lập hạng mục TỶ TRỌNG ĐI TIỀN. Tính toán rõ số lượng cổ phiếu tối đa được phép mua theo công thức: Số lượng = (NAV * % Rủi ro) / (Giá Mua - Giá Cắt lỗ). Đưa ra con số khối lượng chính xác để bảo vệ tài khoản.
+                3. QUẢN TRỊ VỐN (POSITION SIZING): NẾU người dùng cung cấp quy mô vốn (NAV) và mức rủi ro, BẮT BUỘC thiết lập hạng mục TỶ TRỌNG ĐI TIỀN. Tính toán rõ số lượng cổ phiếu tối đa được phép mua.
                 4. KẾ HOẠCH GIAO DỊCH: BẮT BUỘC trình bày theo cấu trúc: 
                    - LUẬN ĐIỂM ĐẦU TƯ: Sự hội tụ giữa Dòng tiền, Kỹ thuật và Cơ bản.
                    - VÙNG MUA (Entry Range): Dựa vào các mức hỗ trợ cứng của Ichimoku.
@@ -445,10 +486,9 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG
                    - ĐIỂM CHỐT LỜI (Take-profit): Vùng giá mục tiêu kỳ vọng.
                    - TỶ TRỌNG ĐI TIỀN: (Chỉ hiện ra nếu có dữ liệu NAV và Rủi ro).
                    - TỶ LỆ R:R: Tính toán rủi ro/lợi nhuận thực tế.
-                5. BÁO CÁO KHUYẾN NGHỊ TỔ CHỨC: Ưu tiên dữ liệu nội bộ. Chỉ gọi công cụ `search_internet` khi thật sự cần thông tin vĩ mô bổ trợ.
-                6. KIỂM CHỨNG REAL-TIME: Luôn gọi `get_live_stock_data` để cập nhật giá.
-                7. VĂN PHONG VÀ TRÌNH BÀY: Chuyên nghiệp, lạnh lùng, định lượng. Tuyệt đối KHÔNG dùng emoji.
-                8. MIỄN TRỪ TRÁCH NHIỆM: Ở cuối câu trả lời luôn chèn chính xác văn bản: "*Miễn trừ trách nhiệm: Kế hoạch giao dịch trên được tổng hợp từ thuật toán định lượng và dữ liệu thị trường hiện hành, nhà đầu tư tự quản trị rủi ro đối với quyết định giải ngân.*"
+                5. KIỂM CHỨNG REAL-TIME: Luôn gọi `get_live_stock_data` để cập nhật giá.
+                6. VĂN PHONG VÀ TRÌNH BÀY: Chuyên nghiệp, lạnh lùng, định lượng. Tuyệt đối KHÔNG dùng emoji.
+                7. MIỄN TRỪ TRÁCH NHIỆM: Ở cuối câu trả lời luôn chèn: "*Miễn trừ trách nhiệm: Kế hoạch giao dịch trên được tổng hợp từ thuật toán định lượng và dữ liệu thị trường hiện hành, nhà đầu tư tự quản trị rủi ro đối với quyết định giải ngân.*"
                 """
                 
                 full_prompt = f"{sys_prompt}\n\nKHO DỮ LIỆU NỘI BỘ:\n{data_context}\n\nTRUY VẤN: {prompt}"
@@ -533,7 +573,6 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG
                 st.error(f"SYSTEM FAULT: {e}")
                 response = None
 
-        # HIỂN THỊ KẾT QUẢ ĐẦU RA AN TOÀN
         if response:
             st.markdown(response.text)
             
@@ -541,9 +580,9 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG
             with col_btn1:
                 components.html(render_copy_button(response.text), height=35)
             with col_btn2:
-                ticker_match = re.search(r'\[([A-Z0-9]{3,4})\]', response.text)
-                ticker_name = ticker_match.group(1) if ticker_match else "STOCK"
-                components.html(render_pdf_button(response.text, ticker_name), height=35)
+                ticker_match = re.search(r'\b[A-Z]{3}\b', response.text)
+                ticker_name = ticker_match.group(0) if ticker_match else "STOCK"
+                components.html(render_pdf_button(response.text, ticker_name, dict_dfs), height=35)
             
             if chart_data_to_save is not None:
                 st.line_chart(chart_data_to_save)

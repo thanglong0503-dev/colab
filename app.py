@@ -45,13 +45,13 @@ def render_copy_button(text_to_copy):
             border: 1px solid #0A84FF;
         }}
         </style>
-        <button class="copy-btn" id="copyBtn">COPY</button>
+        <button class="copy-btn" id="copyBtn">📋 COPY PLAN</button>
         <script>
         document.getElementById("copyBtn").addEventListener("click", function() {{
             const decodedText = decodeURIComponent(escape(window.atob('{text_b64}')));
             navigator.clipboard.writeText(decodedText).then(function() {{
                 document.getElementById("copyBtn").innerText = "✅ COPIED!";
-                setTimeout(() => document.getElementById("copyBtn").innerText = "COPY", 2000);
+                setTimeout(() => document.getElementById("copyBtn").innerText = "📋 COPY PLAN", 2000);
             }});
         }});
         </script>
@@ -62,7 +62,6 @@ def render_copy_button(text_to_copy):
 def generate_professional_report(ai_content):
     """Đóng gói nội dung AI thành tệp Báo cáo chuẩn định dạng tài liệu tổ chức."""
     current_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    # Thay thế Markdown bold, newline thành HTML để render đẹp
     html_content = ai_content.replace('\n', '<br>').replace('**', '<b>')
     html_content = re.sub(r'\*(.*?)\*', r'<i>\1</i>', html_content)
     
@@ -243,6 +242,7 @@ def get_live_stock_data(ticker: str) -> str:
         current_price = stock.fast_info['lastPrice']
         if current_price < 1000: current_price *= 1000
         
+        # TÍNH TOÁN KHỐI LƯỢNG ĐỘT BIẾN REAL-TIME
         hist = stock.history(period="1mo")
         if not hist.empty and len(hist) > 0:
             current_vol = hist['Volume'].iloc[-1]
@@ -255,6 +255,13 @@ def get_live_stock_data(ticker: str) -> str:
         return f"[SYSTEM REAL-TIME UPDATE] Mã: {ticker} | Giá: {current_price:,.0f} VNĐ | {vol_info}."
     except Exception as e:
         return f"Hệ thống không thể truy xuất dữ liệu realtime cho {ticker}. Lỗi: {e}"
+
+def draw_technical_chart(ticker: str) -> str:
+    """MUST call this tool to execute Python code that draws the interactive line chart for the stock when user asks for 'đồ thị', 'biểu đồ', 'chart'.
+    Args:
+        ticker: The 3-letter stock symbol (e.g., HPG, SSI)
+    """
+    return f"[SYSTEM CHART COMMAND TRIGGERED] Hãy xác nhận bằng văn bản rằng đồ thị kỹ thuật mã {ticker} đang được hiển thị ngay bên dưới đoạn hội thoại."
 
 # ==========================================
 # 3. KHỞI TẠO BỘ NHỚ TRUNG TÂM
@@ -317,23 +324,28 @@ with st.sidebar:
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Hệ thống đã kích hoạt Lõi Quản trị Vốn (Position Sizing) và Trạm Xuất Bản. Hãy nhập truy vấn của Ngài."}]
 
-# HIỂN THỊ LẠI LỊCH SỬ CHAT
+# HIỂN THỊ LẠI LỊCH SỬ CHAT VỚI CÁC NÚT ĐIỀU KHIỂN ĐỘC LẬP
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         
-        # Thanh công cụ: Copy & Download Report
+        if "chart" in message and message["chart"] is not None:
+            st.line_chart(message["chart"])
+            
         if message["role"] == "assistant":
             col_btn1, col_btn2, _ = st.columns([1.5, 2, 6])
             with col_btn1:
                 components.html(render_copy_button(message["content"]), height=35)
             with col_btn2:
-                report_file = generate_professional_report(message["content"])
+                report_html = generate_professional_report(message["content"])
+                ticker_match = re.search(r'\[([A-Z0-9]{3,4})\]', message["content"])
+                ticker_name = ticker_match.group(1) if ticker_match else "STOCK"
+                file_name = f"LINANCE_{ticker_name}_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf"
                 st.download_button(
-                    label="EXPORT REPORT",
-                    data=report_file,
-                    file_name=f"LINANCE_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
-                    mime="text/html",
+                    label="📥 EXPORT PDF",
+                    data=report_html,
+                    file_name=file_name,
+                    mime="application/pdf",
                     key=f"dl_btn_{hash(message['content'])}"
                 )
 
@@ -343,6 +355,8 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
+        chart_data_to_save = None 
+        
         with st.spinner("ĐANG XỬ LÝ TRUY VẤN VÀ QUẢN TRỊ RỦI RO..."):
             try:
                 data_context = ""
@@ -368,30 +382,27 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG
                         else:
                             data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
 
-                st.caption(f"Dữ liệu hệ thống đã nạp: {', '.join(dict_dfs.keys())}")
-
                 client = genai.Client(api_key=API_KEY)
                 
-                # BỔ SUNG LÕI QUẢN TRỊ VỐN VÀO HỆ THỐNG NÃO BỘ CỦA AI
                 sys_prompt = """
                 Bạn là Bậc thầy Phân tích Định lượng và Cố vấn Giao dịch cấp tổ chức tại LINANCE Terminal.
                 MỤC TIÊU CỐT LÕI: Đưa ra Kế hoạch Giao dịch (Actionable Trading Plan) quyết đoán. Tuyệt đối không nhận định nước đôi.
 
                 NGUYÊN TẮC HOẠT ĐỘNG:
-                1. ĐỘT BIẾN KHỐI LƯỢNG LÀ TÍN HIỆU CỐT LÕI: Luôn kiểm tra sự đột biến khối lượng (Đột_Biến_KL hoặc dữ liệu Real-time).
+                1. ĐỘT BIẾN KHỐI LƯỢNG LÀ TÍN HIỆU CỐT LÕI: Luôn kiểm tra sự đột biến khối lượng (Đột_Biến_KL hoặc dữ liệu Real-time). Mức độ đột biến > 150% xác nhận dòng tiền lớn (Smart Money).
                 2. PHÂN TÍCH KỸ THUẬT & ICHIMOKU: Bắt buộc đối chiếu sự đồng thuận của hệ thống Ichimoku từ bảng TA_DATA để củng cố luận điểm.
                 3. QUẢN TRỊ VỐN (POSITION SIZING): NẾU người dùng cung cấp quy mô vốn (NAV) và mức rủi ro chấp nhận (Ví dụ: NAV 1 tỷ, rủi ro 2%), BẮT BUỘC thiết lập hạng mục TỶ TRỌNG ĐI TIỀN. Tính toán rõ số lượng cổ phiếu tối đa được phép mua theo công thức: Số lượng = (NAV * % Rủi ro) / (Giá Mua - Giá Cắt lỗ). Đưa ra con số khối lượng chính xác để bảo vệ tài khoản.
                 4. KẾ HOẠCH GIAO DỊCH: BẮT BUỘC trình bày theo cấu trúc: 
                    - LUẬN ĐIỂM ĐẦU TƯ: Sự hội tụ giữa Dòng tiền, Kỹ thuật và Cơ bản.
                    - VÙNG MUA (Entry Range): Dựa vào các mức hỗ trợ cứng của Ichimoku.
-                   - ĐIỂM CẮT LỖ CỨNG (Stop-loss): Giải thích lý do kỹ thuật rõ ràng.
+                   - ĐIỂM CẮT LỖ CỨNG (Stop-loss): Có giải thích lý do kỹ thuật rõ ràng.
                    - ĐIỂM CHỐT LỜI (Take-profit): Vùng giá mục tiêu kỳ vọng.
                    - TỶ TRỌNG ĐI TIỀN: (Chỉ hiện ra nếu có dữ liệu NAV và Rủi ro).
                    - TỶ LỆ R:R: Tính toán rủi ro/lợi nhuận thực tế.
-                5. BÁO CÁO KHUYẾN NGHỊ TỔ CHỨC: Ưu tiên dữ liệu nội bộ. Chỉ dùng `search_internet` khi thật sự cần.
+                5. BÁO CÁO KHUYẾN NGHỊ TỔ CHỨC: Ưu tiên dữ liệu nội bộ. Chỉ gọi công cụ `search_internet` khi thật sự cần thông tin vĩ mô bổ trợ.
                 6. KIỂM CHỨNG REAL-TIME: Luôn gọi `get_live_stock_data` để cập nhật giá.
-                7. VĂN PHONG VÀ TRÌNH BÀY: Chuyên nghiệp, lạnh lùng. Tuyệt đối KHÔNG dùng emoji.
-                8. MIỄN TRỪ TRÁCH NHIỆM: Ở cuối chèn: "*Miễn trừ trách nhiệm: Kế hoạch giao dịch trên được tổng hợp từ thuật toán định lượng và dữ liệu thị trường hiện hành, nhà đầu tư tự quản trị rủi ro đối với quyết định giải ngân.*"
+                7. VĂN PHONG VÀ TRÌNH BÀY: Chuyên nghiệp, lạnh lùng, định lượng. Tuyệt đối KHÔNG dùng emoji.
+                8. MIỄN TRỪ TRÁCH NHIỆM: Ở cuối câu trả lời luôn chèn chính xác văn bản: "*Miễn trừ trách nhiệm: Kế hoạch giao dịch trên được tổng hợp từ thuật toán định lượng và dữ liệu thị trường hiện hành, nhà đầu tư tự quản trị rủi ro đối với quyết định giải ngân.*"
                 """
                 
                 full_prompt = f"{sys_prompt}\n\nKHO DỮ LIỆU NỘI BỘ:\n{data_context}\n\nTRUY VẤN: {prompt}"
@@ -401,7 +412,7 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG
                     contents=full_prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.2,
-                        tools=[search_internet, get_live_stock_data] 
+                        tools=[search_internet, get_live_stock_data, draw_technical_chart] 
                     )
                 )
                 
@@ -416,13 +427,29 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG
                         result_text = ""
                         if tool_call.name == "search_internet":
                             query = tool_call.args.get("query", prompt)
-                            st.caption(f"Hệ thống đang truy xuất Internet: '{query}'...")
                             result_text = search_internet(query)
                             
                         elif tool_call.name == "get_live_stock_data":
                             ticker = tool_call.args.get("ticker", "")
-                            st.caption(f"Hệ thống đang lấy giá và khối lượng Real-time mã: {ticker}...")
                             result_text = get_live_stock_data(ticker)
+                            
+                        elif tool_call.name == "draw_technical_chart":
+                            ticker = tool_call.args.get("ticker", "").strip().upper()
+                            try:
+                                import yfinance as yf
+                                yf_ticker = f"{ticker}.VN" if not ticker.endswith(".VN") else ticker
+                                stock = yf.Ticker(yf_ticker)
+                                hist_data = stock.history(period="6mo")
+                                if not hist_data.empty:
+                                    chart_df = hist_data[['Close']].copy()
+                                    chart_df.rename(columns={'Close': f'Giá {ticker}'}, inplace=True)
+                                    chart_df.index = chart_df.index.tz_localize(None) 
+                                    chart_data_to_save = chart_df
+                                    result_text = "[SYSTEM] Đã nhận được mảng dữ liệu. Hãy trả lời người dùng."
+                                else:
+                                    result_text = f"[SYSTEM CẢNH BÁO] Không tìm thấy lịch sử giá {ticker}."
+                            except Exception as chart_err:
+                                result_text = f"[SYSTEM FAULT] Lỗi: {chart_err}"
                                 
                         tool_response_parts.append(
                             types.Part.from_function_response(
@@ -438,11 +465,29 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG
                         config=types.GenerateContentConfig(temperature=0.2)
                     )
             
+                if chart_data_to_save is None and ("đồ thị" in prompt.lower() or "biểu đồ" in prompt.lower() or "chart" in prompt.lower()):
+                    match = re.search(r'\b[A-Z]{3}\b', prompt.upper())
+                    fallback_ticker = match.group(0) if match else (rpg_ticker if rpg_ticker else None)
+                    
+                    if fallback_ticker:
+                        import yfinance as yf
+                        try:
+                            yf_ticker = f"{fallback_ticker}.VN" if not fallback_ticker.endswith(".VN") else fallback_ticker
+                            stock = yf.Ticker(yf_ticker)
+                            hist_data = stock.history(period="6mo")
+                            if not hist_data.empty:
+                                chart_df = hist_data[['Close']].copy()
+                                chart_df.rename(columns={'Close': f'Giá {fallback_ticker}'}, inplace=True)
+                                chart_df.index = chart_df.index.tz_localize(None)
+                                chart_data_to_save = chart_df
+                        except:
+                            pass
+
             except Exception as e:
                 st.error(f"SYSTEM FAULT: {e}")
                 response = None
 
-        # HIỂN THỊ KẾT QUẢ ĐẦU RA VÀ THANH CÔNG CỤ TRONG PHIÊN HIỆN TẠI
+        # HIỂN THỊ KẾT QUẢ ĐẦU RA AN TOÀN
         if response:
             st.markdown(response.text)
             
@@ -450,14 +495,22 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG
             with col_btn1:
                 components.html(render_copy_button(response.text), height=35)
             with col_btn2:
-                report_file = generate_professional_report(response.text)
+                report_html = generate_professional_report(response.text)
+                ticker_match = re.search(r'\[([A-Z0-9]{3,4})\]', response.text)
+                ticker_name = ticker_match.group(1) if ticker_match else "STOCK"
+                file_name = f"LINANCE_{ticker_name}_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf"
                 st.download_button(
-                    label="EXPORT REPORT",
-                    data=report_file,
-                    file_name=f"LINANCE_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
-                    mime="text/html",
+                    label="📥 EXPORT PDF",
+                    data=report_html,
+                    file_name=file_name,
+                    mime="application/pdf",
                     key=f"dl_btn_{hash(response.text)}"
                 )
             
-            # Lưu lại ngữ cảnh vào bộ nhớ hệ thống
-            st.session_state.messages.append({"role": "assistant", "content": response.text})
+            if chart_data_to_save is not None:
+                st.line_chart(chart_data_to_save)
+                
+            new_msg = {"role": "assistant", "content": response.text}
+            if chart_data_to_save is not None:
+                new_msg["chart"] = chart_data_to_save
+            st.session_state.messages.append(new_msg)

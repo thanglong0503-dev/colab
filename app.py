@@ -330,7 +330,7 @@ for message in st.session_state.messages:
             with col_btn2:
                 report_file = generate_professional_report(message["content"])
                 st.download_button(
-                    label="EXPORT REPORT",
+                    label="REPORT",
                     data=report_file,
                     file_name=f"LINANCE_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
                     mime="text/html",
@@ -452,7 +452,7 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG
             with col_btn2:
                 report_file = generate_professional_report(response.text)
                 st.download_button(
-                    label="EXPORT REPORT",
+                    label="REPORT",
                     data=report_file,
                     file_name=f"LINANCE_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
                     mime="text/html",

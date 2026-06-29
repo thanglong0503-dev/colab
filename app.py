@@ -45,13 +45,13 @@ def render_copy_button(text_to_copy):
             border: 1px solid #0A84FF;
         }}
         </style>
-        <button class="copy-btn" id="copyBtn">COPY PLAN</button>
+        <button class="copy-btn" id="copyBtn">COPY</button>
         <script>
         document.getElementById("copyBtn").addEventListener("click", function() {{
             const decodedText = decodeURIComponent(escape(window.atob('{text_b64}')));
             navigator.clipboard.writeText(decodedText).then(function() {{
                 document.getElementById("copyBtn").innerText = "✅ COPIED!";
-                setTimeout(() => document.getElementById("copyBtn").innerText = "COPY PLAN", 2000);
+                setTimeout(() => document.getElementById("copyBtn").innerText = "COPY", 2000);
             }});
         }});
         </script>
@@ -330,7 +330,7 @@ for message in st.session_state.messages:
             with col_btn2:
                 report_file = generate_professional_report(message["content"])
                 st.download_button(
-                    label="REPORT",
+                    label="EXPORT REPORT",
                     data=report_file,
                     file_name=f"LINANCE_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
                     mime="text/html",
@@ -451,25 +451,13 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG
                 components.html(render_copy_button(response.text), height=35)
             with col_btn2:
                 report_file = generate_professional_report(response.text)
-                
-                # Thay thế phần hiển thị nút download trong vòng lặp 'for message in st.session_state.messages' 
-# và trong phần xử lý 'if response:' bằng đoạn mã sau:
-
-report_html = generate_professional_report(message["content"])
-
-# Trích xuất mã CK từ câu trả lời (giả định mã nằm trong dấu ngoặc vuông [] hoặc cạnh từ "Mã:")
-ticker_match = re.search(r'\[([A-Z0-9]{3,4})\]', message["content"])
-ticker_name = ticker_match.group(1) if ticker_match else "STOCK"
-
-file_name = f"LINANCE_{ticker_name}_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf"
-
-st.download_button(
-    label="TẢI BÁO CÁO PDF",
-    data=report_html,
-    file_name=file_name,
-    mime="application/pdf", # Trình duyệt sẽ nhận diện đây là file PDF
-    key=f"dl_btn_{hash(message['content'])}"
-)
+                st.download_button(
+                    label="EXPORT REPORT",
+                    data=report_file,
+                    file_name=f"LINANCE_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
+                    mime="text/html",
+                    key=f"dl_btn_{hash(response.text)}"
+                )
             
             # Lưu lại ngữ cảnh vào bộ nhớ hệ thống
             st.session_state.messages.append({"role": "assistant", "content": response.text})

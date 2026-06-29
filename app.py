@@ -45,13 +45,13 @@ def render_copy_button(text_to_copy):
             border: 1px solid #0A84FF;
         }}
         </style>
-        <button class="copy-btn" id="copyBtn">📋 COPY PLAN</button>
+        <button class="copy-btn" id="copyBtn">COPY PLAN</button>
         <script>
         document.getElementById("copyBtn").addEventListener("click", function() {{
             const decodedText = decodeURIComponent(escape(window.atob('{text_b64}')));
             navigator.clipboard.writeText(decodedText).then(function() {{
                 document.getElementById("copyBtn").innerText = "✅ COPIED!";
-                setTimeout(() => document.getElementById("copyBtn").innerText = "📋 COPY PLAN", 2000);
+                setTimeout(() => document.getElementById("copyBtn").innerText = "COPY PLAN", 2000);
             }});
         }});
         </script>
@@ -500,7 +500,7 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn (VD: Phân tích HPG
                 ticker_name = ticker_match.group(1) if ticker_match else "STOCK"
                 file_name = f"LINANCE_{ticker_name}_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf"
                 st.download_button(
-                    label="📥 EXPORT PDF",
+                    label="EXPORT PDF",
                     data=report_html,
                     file_name=file_name,
                     mime="application/pdf",

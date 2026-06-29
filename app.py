@@ -44,13 +44,13 @@ def render_copy_button(text_to_copy):
             border: 1px solid #0A84FF;
         }}
         </style>
-        <button class="copy-btn" id="copyBtn">📋 COPY PLAN</button>
+        <button class="copy-btn" id="copyBtn">COPY</button>
         <script>
         document.getElementById("copyBtn").addEventListener("click", function() {{
             const decodedText = decodeURIComponent(escape(window.atob('{text_b64}')));
             navigator.clipboard.writeText(decodedText).then(function() {{
                 document.getElementById("copyBtn").innerText = "✅ COPIED!";
-                setTimeout(() => document.getElementById("copyBtn").innerText = "📋 COPY PLAN", 2000);
+                setTimeout(() => document.getElementById("copyBtn").innerText = "COPY", 2000);
             }});
         }});
         </script>

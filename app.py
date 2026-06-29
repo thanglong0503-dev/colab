@@ -44,13 +44,13 @@ def render_copy_button(text_to_copy):
             border: 1px solid #0A84FF;
         }}
         </style>
-        <button class="copy-btn" id="copyBtn">📋 COPY PLAN</button>
+        <button class="copy-btn" id="copyBtn">COPY PLAN</button>
         <script>
         document.getElementById("copyBtn").addEventListener("click", function() {{
             const decodedText = decodeURIComponent(escape(window.atob('{text_b64}')));
             navigator.clipboard.writeText(decodedText).then(function() {{
                 document.getElementById("copyBtn").innerText = "✅ COPIED!";
-                setTimeout(() => document.getElementById("copyBtn").innerText = "📋 COPY PLAN", 2000);
+                setTimeout(() => document.getElementById("copyBtn").innerText = "COPY PLAN", 2000);
             }});
         }});
         </script>
@@ -110,7 +110,7 @@ def render_pdf_button(ai_content, ticker_name):
             border: 1px solid #10B981;
         }}
         </style>
-        <button class="pdf-btn" id="dlPdfBtn" onclick="exportPDF()">📥 EXPORT PDF</button>
+        <button class="pdf-btn" id="dlPdfBtn" onclick="exportPDF()">EXPORT PDF</button>
         <script>
         function exportPDF() {{
             document.getElementById("dlPdfBtn").innerText = "⏳ GENERATING...";
@@ -129,7 +129,7 @@ def render_pdf_button(ai_content, ticker_name):
             
             html2pdf().set(opt).from(tempDiv).save().then(function() {{
                 document.getElementById("dlPdfBtn").innerText = "✅ DOWNLOADED!";
-                setTimeout(() => document.getElementById("dlPdfBtn").innerText = "📥 EXPORT PDF", 3000);
+                setTimeout(() => document.getElementById("dlPdfBtn").innerText = "EXPORT PDF", 3000);
             }});
         }}
         </script>

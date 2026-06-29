@@ -5,6 +5,8 @@ from google.oauth2.service_account import Credentials
 from google import genai
 from google.genai import types
 import re
+import streamlit.components.v1 as components
+import base64
 
 # ==========================================
 # CẤU HÌNH GIAO DIỆN CHÍNH
@@ -14,6 +16,48 @@ st.set_page_config(page_title="LINANCE TERMINAL", page_icon="CORE", layout="cent
 # ==========================================
 # 1. KHAI BÁO CÁC HÀM TIỆN ÍCH & AI SKILLS
 # ==========================================
+def render_copy_button(text_to_copy):
+    """Hàm tạo nút sao chép bằng HTML/JS nhúng, mã hóa Base64 để tránh lỗi ký tự."""
+    text_b64 = base64.b64encode(text_to_copy.encode('utf-8')).decode('utf-8')
+    html_code = f"""
+    <body style="margin: 0; padding: 0; overflow: hidden; background-color: transparent;">
+        <style>
+        .copy-btn {{
+            background-color: transparent;
+            color: #0A84FF;
+            border: 1px solid rgba(10, 132, 255, 0.5);
+            border-radius: 6px;
+            padding: 4px 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .copy-btn:hover {{
+            background-color: #0A84FF;
+            color: #FFFFFF;
+            box-shadow: 0 0 10px rgba(10, 132, 255, 0.4);
+            border: 1px solid #0A84FF;
+        }}
+        </style>
+        <button class="copy-btn" id="copyBtn">📋 COPY PLAN</button>
+        <script>
+        document.getElementById("copyBtn").addEventListener("click", function() {{
+            const decodedText = decodeURIComponent(escape(window.atob('{text_b64}')));
+            navigator.clipboard.writeText(decodedText).then(function() {{
+                document.getElementById("copyBtn").innerText = "✅ COPIED!";
+                setTimeout(() => document.getElementById("copyBtn").innerText = "📋 COPY PLAN", 2000);
+            }});
+        }});
+        </script>
+    </body>
+    """
+    return html_code
+
 @st.cache_data(ttl=600)
 def load_all_sheets():
     try:
@@ -172,6 +216,13 @@ def get_live_stock_data(ticker: str) -> str:
     except Exception as e:
         return f"Hệ thống không thể truy xuất dữ liệu realtime cho {ticker}. Lỗi: {e}"
 
+def draw_technical_chart(ticker: str) -> str:
+    """MUST call this tool to execute Python code that draws the interactive line chart for the stock when user asks for 'đồ thị', 'biểu đồ', 'chart'.
+    Args:
+        ticker: The 3-letter stock symbol (e.g., HPG, SSI)
+    """
+    return f"[SYSTEM CHART COMMAND TRIGGERED] Hãy xác nhận bằng văn bản rằng đồ thị kỹ thuật mã {ticker} đang được hiển thị ngay bên dưới đoạn hội thoại."
+
 # ==========================================
 # 2. KHỞI TẠO BỘ NHỚ TRUNG TÂM
 # ==========================================
@@ -231,12 +282,18 @@ with st.sidebar:
 # 5. TRUNG TÂM XỬ LÝ CHATBOT AI AGENT
 # ==========================================
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Hệ thống phân tích đã sẵn sàng tiếp nhận truy vấn. Tính năng soi Đột biến Khối lượng đã được kích hoạt."}]
+    st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Hệ thống phân tích đã sẵn sàng tiếp nhận truy vấn."}]
 
-# HIỂN THỊ LẠI LỊCH SỬ CHAT
+# HIỂN THỊ LẠI LỊCH SỬ CHAT VÀ ĐỒ THỊ ĐÃ LƯU
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        # Hiển thị biểu đồ nếu có
+        if "chart" in message and message["chart"] is not None:
+            st.line_chart(message["chart"])
+        # Hiển thị nút COPY dưới câu trả lời của AI
+        if message["role"] == "assistant":
+            components.html(render_copy_button(message["content"]), height=30)
 
 if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân tích..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -244,12 +301,13 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
+        chart_data_to_save = None # Biến bảo chứng đồ thị
+        
         with st.spinner("ĐANG XỬ LÝ TRUY VẤN..."):
             try:
                 data_context = ""
                 for sheet_name, df_sheet in dict_dfs.items():
                     if not df_sheet.empty:
-                        # Ép kiểu float về str tránh lỗi làm tròn nếu có chuỗi lẫn lộn
                         df_clean = df_sheet.copy()
                         for col in df_clean.select_dtypes(include=['float64', 'float32']).columns:
                             df_clean[col] = df_clean[col].round(2)
@@ -268,14 +326,12 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                             else: 
                                 data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
                         else:
-                            # NẠP CÁC BẢNG NỘI BỘ KHÁC (NHƯ REPORTS_DB) NẾU CÓ
                             data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
 
                 st.caption(f"Dữ liệu hệ thống đã nạp: {', '.join(dict_dfs.keys())}")
 
                 client = genai.Client(api_key=API_KEY)
                 
-                # KHÔI PHỤC TOÀN BỘ LOGIC: KHỐI LƯỢNG + ICHIMOKU + BÁO CÁO NỘI BỘ
                 sys_prompt = """
                 Bạn là Bậc thầy Phân tích Định lượng và Cố vấn Giao dịch cấp tổ chức tại LINANCE Terminal.
                 MỤC TIÊU CỐT LÕI: Đưa ra Kế hoạch Giao dịch (Actionable Trading Plan) quyết đoán. Tuyệt đối không nhận định nước đôi.
@@ -302,10 +358,12 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                     contents=full_prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.2,
-                        tools=[search_internet, get_live_stock_data] 
+                        tools=[search_internet, get_live_stock_data, draw_technical_chart] 
                     )
                 )
                 
+                chart_triggered = False
+
                 if response.function_calls:
                     messages_for_ai = [
                         types.Content(role="user", parts=[types.Part.from_text(full_prompt)]),
@@ -322,8 +380,29 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                             
                         elif tool_call.name == "get_live_stock_data":
                             ticker = tool_call.args.get("ticker", "")
-                            st.caption(f"Hệ thống đang lấy giá và khối lượng Real-time mã: {ticker}...")
+                            st.caption(f"Hệ thống đang lấy giá Real-time mã: {ticker}...")
                             result_text = get_live_stock_data(ticker)
+                            
+                        elif tool_call.name == "draw_technical_chart":
+                            ticker = tool_call.args.get("ticker", "").strip().upper()
+                            chart_triggered = True
+                            st.caption(f"Hệ thống đang kết nối API đồ thị mã: {ticker}...")
+                            
+                            try:
+                                import yfinance as yf
+                                yf_ticker = f"{ticker}.VN" if not ticker.endswith(".VN") else ticker
+                                stock = yf.Ticker(yf_ticker)
+                                hist_data = stock.history(period="6mo")
+                                if not hist_data.empty:
+                                    chart_df = hist_data[['Close']].copy()
+                                    chart_df.rename(columns={'Close': f'Giá {ticker}'}, inplace=True)
+                                    chart_df.index = chart_df.index.tz_localize(None) 
+                                    chart_data_to_save = chart_df
+                                    result_text = "[SYSTEM] Đã nhận được mảng dữ liệu. Hãy trả lời người dùng."
+                                else:
+                                    result_text = f"[SYSTEM CẢNH BÁO] Không tìm thấy lịch sử giá {ticker}."
+                            except Exception as chart_err:
+                                result_text = f"[SYSTEM FAULT] Lỗi: {chart_err}"
                                 
                         tool_response_parts.append(
                             types.Part.from_function_response(
@@ -339,6 +418,25 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
                         config=types.GenerateContentConfig(temperature=0.2)
                     )
             
+                if chart_data_to_save is None and ("đồ thị" in prompt.lower() or "biểu đồ" in prompt.lower() or "chart" in prompt.lower()):
+                    match = re.search(r'\b[A-Z]{3}\b', prompt.upper())
+                    fallback_ticker = match.group(0) if match else (rpg_ticker if rpg_ticker else None)
+                    
+                    if fallback_ticker:
+                        st.caption(f"[CƯỠNG CHẾ] Khởi động thuật toán vẽ đồ thị thủ công cho {fallback_ticker}...")
+                        import yfinance as yf
+                        try:
+                            yf_ticker = f"{fallback_ticker}.VN" if not fallback_ticker.endswith(".VN") else fallback_ticker
+                            stock = yf.Ticker(yf_ticker)
+                            hist_data = stock.history(period="6mo")
+                            if not hist_data.empty:
+                                chart_df = hist_data[['Close']].copy()
+                                chart_df.rename(columns={'Close': f'Giá {fallback_ticker}'}, inplace=True)
+                                chart_df.index = chart_df.index.tz_localize(None)
+                                chart_data_to_save = chart_df
+                        except:
+                            pass
+
             except Exception as e:
                 st.error(f"SYSTEM FAULT: {e}")
                 response = None
@@ -347,5 +445,14 @@ if prompt := st.chat_input("Nhập mã chứng khoán hoặc truy vấn phân t�
         if response:
             st.markdown(response.text)
             
+            # Xuất nút Copy ngay dưới câu trả lời hiện tại
+            components.html(render_copy_button(response.text), height=30)
+            
+            if chart_data_to_save is not None:
+                st.line_chart(chart_data_to_save)
+                
             # Lưu lại ngữ cảnh vào bộ nhớ hệ thống
-            st.session_state.messages.append({"role": "assistant", "content": response.text})
+            new_msg = {"role": "assistant", "content": response.text}
+            if chart_data_to_save is not None:
+                new_msg["chart"] = chart_data_to_save
+            st.session_state.messages.append(new_msg)

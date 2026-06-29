@@ -18,6 +18,7 @@ st.set_page_config(page_title="LINANCE TERMINAL", page_icon="CORE", layout="cent
 # 1. KHAI BÁO CÁC HÀM TIỆN ÍCH, UI & AI SKILLS
 # ==========================================
 def render_copy_button(text_to_copy):
+    """Hàm tạo nút sao chép bằng HTML/JS nhúng, sử dụng TextDecoder để bảo toàn Tiếng Việt."""
     text_b64 = base64.b64encode(text_to_copy.encode('utf-8')).decode('utf-8')
     html_code = f"""
     <body style="margin: 0; padding: 0; overflow: hidden; background-color: transparent;">
@@ -47,7 +48,13 @@ def render_copy_button(text_to_copy):
         <button class="copy-btn" id="copyBtn">COPY PLAN</button>
         <script>
         document.getElementById("copyBtn").addEventListener("click", function() {{
-            const decodedText = decodeURIComponent(escape(window.atob('{text_b64}')));
+            const binaryString = window.atob('{text_b64}');
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {{
+                bytes[i] = binaryString.charCodeAt(i);
+            }}
+            const decodedText = new TextDecoder('utf-8').decode(bytes);
+            
             navigator.clipboard.writeText(decodedText).then(function() {{
                 document.getElementById("copyBtn").innerText = "✅ COPIED!";
                 setTimeout(() => document.getElementById("copyBtn").innerText = "COPY PLAN", 2000);
@@ -59,13 +66,15 @@ def render_copy_button(text_to_copy):
     return html_code
 
 def render_pdf_button(ai_content, ticker_name):
+    """Render file PDF nhúng Font Roboto chuẩn Google để không vỡ Font Tiếng Việt."""
     current_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     html_content = ai_content.replace('\n', '<br>').replace('**', '<b>')
     html_content = re.sub(r'\*(.*?)\*', r'<i>\1</i>', html_content)
     
-    # Mã HTML của báo cáo chuẩn
+    # Mã HTML của báo cáo chuẩn (Đã nhúng Font Roboto)
     raw_report_html = f"""
-    <div style="font-family: 'Arial', sans-serif; padding: 40px; color: #333; line-height: 1.6; background-color: white;">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,700;1,400&subset=vietnamese&display=swap" rel="stylesheet">
+    <div style="font-family: 'Roboto', sans-serif; padding: 40px; color: #333; line-height: 1.6; background-color: white;">
         <div style="border-bottom: 2px solid #0A84FF; padding-bottom: 10px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: baseline;">
             <div style="font-size: 24px; font-weight: 900; color: #0B0F17;">LINANCE<span style="color: #0A84FF;">.CORE</span></div>
             <div style="font-size: 12px; color: #666; font-family: monospace;">Issued: {current_time}</div>
@@ -114,7 +123,14 @@ def render_pdf_button(ai_content, ticker_name):
         <script>
         function exportPDF() {{
             document.getElementById("dlPdfBtn").innerText = "⏳ GENERATING...";
-            const decodedHtml = decodeURIComponent(escape(window.atob('{b64_html}')));
+            
+            // Giải mã TextDecoder mạnh mẽ bảo toàn Unicode
+            const binaryString = window.atob('{b64_html}');
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {{
+                bytes[i] = binaryString.charCodeAt(i);
+            }}
+            const decodedHtml = new TextDecoder('utf-8').decode(bytes);
             
             const tempDiv = document.createElement('div');
             tempDiv.innerHTML = decodedHtml;
@@ -127,10 +143,13 @@ def render_pdf_button(ai_content, ticker_name):
               jsPDF:        {{ unit: 'in', format: 'a4', orientation: 'portrait' }}
             }};
             
-            html2pdf().set(opt).from(tempDiv).save().then(function() {{
-                document.getElementById("dlPdfBtn").innerText = "✅ DOWNLOADED!";
-                setTimeout(() => document.getElementById("dlPdfBtn").innerText = "EXPORT PDF", 3000);
-            }});
+            // Đợi Font Roboto load xong mới render PDF
+            setTimeout(() => {{
+                html2pdf().set(opt).from(tempDiv).save().then(function() {{
+                    document.getElementById("dlPdfBtn").innerText = "✅ DOWNLOADED!";
+                    setTimeout(() => document.getElementById("dlPdfBtn").innerText = "EXPORT PDF", 3000);
+                }});
+            }}, 500); // 500ms delay for font loading
         }}
         </script>
     </body>

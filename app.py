@@ -342,7 +342,7 @@ for message in st.session_state.messages:
                 ticker_name = ticker_match.group(1) if ticker_match else "STOCK"
                 file_name = f"LINANCE_{ticker_name}_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf"
                 st.download_button(
-                    label="📥 EXPORT PDF",
+                    label="EXPORT PDF",
                     data=report_html,
                     file_name=file_name,
                     mime="application/pdf",

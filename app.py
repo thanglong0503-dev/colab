@@ -124,7 +124,7 @@ def render_copy_button(text_to_copy):
         .copy-btn {{ background-color: transparent; color: #0A84FF; border: 1px solid rgba(10, 132, 255, 0.5); border-radius: 6px; padding: 6px 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; display: inline-flex; align-items: center; justify-content: center; }}
         .copy-btn:hover {{ background-color: #0A84FF; color: #FFFFFF; box-shadow: 0 0 10px rgba(10, 132, 255, 0.4); border: 1px solid #0A84FF; }}
         </style>
-        <button class="copy-btn" id="copyBtn">COPY PLAN</button>
+        <button class="copy-btn" id="copyBtn">📋 COPY PLAN</button>
         <script>
         document.getElementById("copyBtn").addEventListener("click", function() {{
             const binaryString = window.atob('{text_b64}');
@@ -133,7 +133,7 @@ def render_copy_button(text_to_copy):
             const decodedText = new TextDecoder('utf-8').decode(bytes);
             navigator.clipboard.writeText(decodedText).then(function() {{
                 document.getElementById("copyBtn").innerText = "✅ COPIED!";
-                setTimeout(() => document.getElementById("copyBtn").innerText = "COPY PLAN", 2000);
+                setTimeout(() => document.getElementById("copyBtn").innerText = "📋 COPY PLAN", 2000);
             }});
         }});
         </script>
@@ -178,7 +178,6 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
     cloud_status = str(stock_ta.get('Trạng Thái Mây', 'N/A'))
     kumo_signal = str(stock_ta.get('Tín Hiệu Kumo', 'N/A'))
     
-    # BẢNG SO SÁNH ĐỐI THỦ (Thêm class avoid-break để không bị cắt trang)
     peer_html = ""
     if industry and not df_rs.empty:
         peers_df = df_rs[(df_rs['Ngành'] == industry) & (df_rs['Mã CK'] != ticker_name)].sort_values(by='RS_1M', ascending=False).head(3)
@@ -209,23 +208,21 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
             </div>
             """
 
-    # Tạo mã Base64 cho biểu đồ
     chart_base64 = generate_chart_base64(ticker_name, df_ta)
     chart_html = f'<div class="avoid-break" style="margin-top: 40px; text-align: center; position: relative; z-index: 2;"><img src="{chart_base64}" style="width: 100%; border: 1px solid #E2E8F0; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"></div>' if chart_base64 else ""
     
-    # Fix Watermark: Mã hóa Base64 cho SVG để không bị lỗi dấu ngoặc kép HTML
     svg_watermark = f"<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400'><text x='50%' y='50%' font-size='40' fill='%230078D4' fill-opacity='0.03' font-family='Arial' font-weight='bold' text-anchor='middle' transform='rotate(-45 200 200)'>LINANCE.CORE</text></svg>"
     b64_watermark = base64.b64encode(svg_watermark.encode('utf-8')).decode('utf-8')
     bg_style = f"background-image: url('data:image/svg+xml;base64,{b64_watermark}'); background-repeat: repeat;"
 
-    # 3. HTML Layout - CSS bổ sung page-break-inside: avoid
     raw_report_html = f"""
     <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,700;1,400&subset=vietnamese&display=swap" rel="stylesheet">
     <style>
-        /* Lớp CSS chống cắt ngang nội dung khi ngắt trang */
         .avoid-break {{
-            page-break-inside: avoid;
-            break-inside: avoid;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            -webkit-column-break-inside: avoid !important;
+            display: block;
         }}
     </style>
     <div style="font-family: 'Roboto', sans-serif; padding: 0; color: #333; line-height: 1.6; background-color: white; max-width: 1000px; margin: 0 auto; box-sizing: border-box; {bg_style}">
@@ -233,7 +230,7 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
         <div style="background-color: #0078D4; color: white; padding: 40px; display: flex; justify-content: space-between; align-items: center; position: relative; z-index: 2;">
             <div>
                 <div style="font-size: 14px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 5px;">BÁO CÁO CẬP NHẬT ĐỊNH LƯỢNG</div>
-                <div style="font-size: 38px; font-weight: 900; letter-spacing: 1px;">MÃ CỔ PHIẾU: {ticker_name}</div>
+                <div style="font-size: 38px; font-weight: 900; letter-spacing: 1px;">MẠ CỔ PHIẾU: {ticker_name}</div>
             </div>
             <div style="text-align: right;">
                 <div style="font-size: 26px; font-weight: 900;">LINANCE<span style="color: #93C5FD;">.CORE</span></div>
@@ -279,16 +276,17 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
             
         </div>
         
-        <div class="avoid-break" style="margin: 40px; padding-top: 20px; border-top: 2px solid #0078D4; display: flex; justify-content: space-between; align-items: flex-start; position: relative; z-index: 2; background: rgba(255,255,255,0.9);">
-            <div style="font-size: 13px; color: #1E293B; line-height: 1.5;">
-                <b style="color: #0078D4; font-size: 15px;">Nguyễn Đào Thăng Long</b><br>
-                Chuyên viên phân tích định lượng (Quantitative Analyst - Quant)<br>
-                <b>Chứng khoán Mirae Asset Vietnam (MAS)</b>
-            </div>
-            <div style="font-size: 11px; color: #94A3B8; text-align: right; font-style: italic; max-width: 450px; line-height: 1.4;">
-                CONFIDENTIAL REPORT. Generated by LINANCE Quantitative AI System.<br>
-                <b>Trung tâm phân tích định lượng LINANCE</b><br>
-                Disclaimer: Báo cáo được tạo tự động bởi thuật toán định lượng dựa trên dữ liệu hiện hành. Nhà đầu tư tự chịu trách nhiệm và quản trị rủi ro đối với quyết định giải ngân.
+        <div class="avoid-break" style="margin: 40px 40px 20px 40px; background: rgba(255,255,255,0.9); position: relative; z-index: 2;">
+            <div style="padding-top: 20px; border-top: 2px solid #0078D4; display: flex; justify-content: space-between; align-items: flex-start;">
+                <div style="font-size: 13px; color: #1E293B; line-height: 1.5;">
+                    <b style="color: #0078D4; font-size: 15px;">Nguyễn Đào Thăng Long</b><br>
+                    Chuyên viên phân tích định lượng (Quantitative Analyst - Quant)<br>
+                    <b>Trung tâm phân tích định lượng LINANCE</b>
+                </div>
+                <div style="font-size: 11px; color: #94A3B8; text-align: right; font-style: italic; max-width: 450px; line-height: 1.4;">
+                    CONFIDENTIAL REPORT. Generated by LINANCE Quantitative AI System.<br>
+                    Disclaimer: Báo cáo được tạo tự động bởi thuật toán định lượng dựa trên dữ liệu hiện hành. Nhà đầu tư tự chịu trách nhiệm và quản trị rủi ro đối với quyết định giải ngân.
+                </div>
             </div>
         </div>
     </div>
@@ -304,7 +302,7 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
         .pdf-btn {{ background-color: transparent; color: #10B981; border: 1px solid rgba(16, 185, 129, 0.5); border-radius: 6px; padding: 6px 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; display: inline-flex; align-items: center; justify-content: center; }}
         .pdf-btn:hover {{ background-color: #10B981; color: #FFFFFF; box-shadow: 0 0 10px rgba(16, 185, 129, 0.4); border: 1px solid #10B981; }}
         </style>
-        <button class="pdf-btn" id="dlPdfBtn" onclick="exportPDF()">EXPORT PDF</button>
+        <button class="pdf-btn" id="dlPdfBtn" onclick="exportPDF()">📥 EXPORT PDF</button>
         <script>
         function exportPDF() {{
             document.getElementById("dlPdfBtn").innerText = "⏳ GENERATING...";
@@ -316,7 +314,6 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
             const tempDiv = document.createElement('div');
             tempDiv.innerHTML = decodedHtml;
             
-            // THÊM THUỘC TÍNH PAGEBREAK ĐỂ KHÔNG BỊ CẮT BẢNG BIỂU
             var opt = {{
               margin:       [0.4, 0, 0.4, 0],
               filename:     '{file_name}',
@@ -329,7 +326,7 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
             setTimeout(() => {{
                 html2pdf().set(opt).from(tempDiv).save().then(function() {{
                     document.getElementById("dlPdfBtn").innerText = "✅ DOWNLOADED!";
-                    setTimeout(() => document.getElementById("dlPdfBtn").innerText = "EXPORT PDF", 3000);
+                    setTimeout(() => document.getElementById("dlPdfBtn").innerText = "📥 EXPORT PDF", 3000);
                 }});
             }}, 500);
         }}
@@ -557,7 +554,7 @@ with st.sidebar:
 # 7. TRUNG TÂM XỬ LÝ CHATBOT AI AGENT
 # ==========================================
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Lỗi cắt ngang PDF và Watermark đã được xử lý triệt để. Biểu đồ nến Volume đa tầng đã sẵn sàng."}]
+    st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Lỗi cắt trang PDF và thông tin Footer đã được cập nhật thành công."}]
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):

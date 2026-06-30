@@ -20,67 +20,58 @@ st.set_page_config(page_title="LINANCE TERMINAL", page_icon="CORE", layout="cent
 # 1. LÕI KỸ THUẬT: VẼ ĐỒ THỊ NẾN & MÃ HÓA BASE64
 # ==========================================
 def generate_chart_base64(ticker: str, df_ta: pd.DataFrame):
-    """Hàm vẽ đồ thị nến Nhật 30 phiên và ghim các mốc chiến thuật, trả về mã Base64."""
+    """Hàm vẽ đồ thị nến Nhật 30 phiên, CĂNG NGANG (Aspect Ratio 12:4)"""
     import yfinance as yf
     try:
-        # 1. Lấy dữ liệu 30 phiên gần nhất
         yf_ticker = f"{ticker}.VN" if not ticker.endswith(".VN") else ticker
         stock = yf.Ticker(yf_ticker)
-        hist = stock.history(period="45d").tail(30) # Lấy dư để chốt đúng 30 nến
+        hist = stock.history(period="45d").tail(30)
         
         if hist.empty:
             return ""
 
-        # 2. Lấy dữ liệu TA để kẻ mốc chiến thuật
         tenkan_val, kijun_val = None, None
         if df_ta is not None and not df_ta.empty and ticker in df_ta['Mã CK'].values:
             ta_data = df_ta[df_ta['Mã CK'] == ticker].iloc[0].to_dict()
             tenkan_val = float(ta_data.get('Tenkan_sen', 0))
             kijun_val = float(ta_data.get('Kijun_sen', 0))
 
-        # 3. Khởi tạo Figure Matplotlib
+        # Tăng figsize để biểu đồ căng ngang bề rộng trang PDF
         plt.style.use('dark_background')
-        fig, ax = plt.subplots(figsize=(8, 4), dpi=150)
+        fig, ax = plt.subplots(figsize=(12, 4.5), dpi=200)
         fig.patch.set_facecolor('#0B0F17')
         ax.set_facecolor('#0B0F17')
 
-        # 4. Vẽ biểu đồ nến thủ công
         x_indices = range(len(hist))
         for i in x_indices:
             row = hist.iloc[i]
-            color = '#10B981' if row['Close'] >= row['Open'] else '#EF4444' # Xanh/Đỏ
-            # Vẽ râu nến (Shadow)
-            ax.plot([i, i], [row['Low'], row['High']], color=color, linewidth=1)
-            # Vẽ thân nến (Body)
+            color = '#10B981' if row['Close'] >= row['Open'] else '#EF4444'
+            ax.plot([i, i], [row['Low'], row['High']], color=color, linewidth=1.5)
             body_bottom = min(row['Open'], row['Close'])
             body_top = max(row['Open'], row['Close'])
-            body_height = max(body_top - body_bottom, 0.001) # Tránh nến Doji bị ẩn
-            ax.add_patch(plt.Rectangle((i - 0.3, body_bottom), 0.6, body_height, facecolor=color, edgecolor=color))
+            body_height = max(body_top - body_bottom, 0.001)
+            ax.add_patch(plt.Rectangle((i - 0.4, body_bottom), 0.8, body_height, facecolor=color, edgecolor=color))
 
-        # 5. Kẻ các đường mốc chiến thuật (Từ TA_DATA)
         current_price = hist['Close'].iloc[-1]
         ax.axhline(y=current_price, color='#0A84FF', linestyle='-', linewidth=1.5, alpha=0.8, label=f'Giá hiện tại: {current_price:,.0f}')
         
         if tenkan_val and tenkan_val > 0:
-            ax.axhline(y=tenkan_val, color='#F59E0B', linestyle='--', linewidth=1.2, alpha=0.8, label=f'Hỗ trợ (Tenkan): {tenkan_val:,.0f}')
+            ax.axhline(y=tenkan_val, color='#F59E0B', linestyle='--', linewidth=1.2, alpha=0.8, label=f'Tenkan-sen: {tenkan_val:,.0f}')
         if kijun_val and kijun_val > 0:
-            ax.axhline(y=kijun_val, color='#EF4444', linestyle='-.', linewidth=1.2, alpha=0.8, label=f'Cắt lỗ cứng (Kijun): {kijun_val:,.0f}')
+            ax.axhline(y=kijun_val, color='#EF4444', linestyle='-.', linewidth=1.2, alpha=0.8, label=f'Kijun-sen: {kijun_val:,.0f}')
 
-        # 6. Tinh chỉnh giao diện đồ thị
-        ax.set_title(f"Hành vi giá 30 phiên & Các mốc chiến thuật - {ticker}", color='white', pad=15, fontsize=12, fontfamily='monospace')
-        ax.legend(loc='upper left', fontsize=8, facecolor='#1C2635', edgecolor='none')
+        ax.set_title(f"BIỂU ĐỒ HÀNH VI GIÁ VÀ CÁC MỐC CHIẾN THUẬT QUAN TRỌNG - {ticker}", color='white', pad=15, fontsize=12, fontweight='bold', fontfamily='sans-serif')
+        ax.legend(loc='upper left', fontsize=9, facecolor='#1C2635', edgecolor='none')
         ax.grid(True, color='white', alpha=0.05)
-        ax.set_xticks(x_indices[::5]) # Hiện ngày cách nhau 5 phiên
-        ax.set_xticklabels([hist.index[i].strftime('%d/%m') for i in x_indices[::5]], rotation=45, color='gray', fontsize=8)
-        ax.tick_params(axis='y', colors='gray', labelsize=8)
+        ax.set_xticks(x_indices[::3])
+        ax.set_xticklabels([hist.index[i].strftime('%d/%m') for i in x_indices[::3]], rotation=0, color='#94A3B8', fontsize=9)
+        ax.tick_params(axis='y', colors='#94A3B8', labelsize=9)
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         ax.spines['left'].set_color('#333333')
         ax.spines['bottom'].set_color('#333333')
         
         plt.tight_layout()
-
-        # 7. Xuất ra luồng Base64
         buf = io.BytesIO()
         plt.savefig(buf, format='png', bbox_inches='tight')
         plt.close(fig)
@@ -101,7 +92,7 @@ def render_copy_button(text_to_copy):
         .copy-btn {{ background-color: transparent; color: #0A84FF; border: 1px solid rgba(10, 132, 255, 0.5); border-radius: 6px; padding: 6px 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; display: inline-flex; align-items: center; justify-content: center; }}
         .copy-btn:hover {{ background-color: #0A84FF; color: #FFFFFF; box-shadow: 0 0 10px rgba(10, 132, 255, 0.4); border: 1px solid #0A84FF; }}
         </style>
-        <button class="copy-btn" id="copyBtn">COPY PLAN</button>
+        <button class="copy-btn" id="copyBtn">📋 COPY PLAN</button>
         <script>
         document.getElementById("copyBtn").addEventListener("click", function() {{
             const binaryString = window.atob('{text_b64}');
@@ -110,7 +101,7 @@ def render_copy_button(text_to_copy):
             const decodedText = new TextDecoder('utf-8').decode(bytes);
             navigator.clipboard.writeText(decodedText).then(function() {{
                 document.getElementById("copyBtn").innerText = "✅ COPIED!";
-                setTimeout(() => document.getElementById("copyBtn").innerText = "COPY PLAN", 2000);
+                setTimeout(() => document.getElementById("copyBtn").innerText = "📋 COPY PLAN", 2000);
             }});
         }});
         </script>
@@ -119,84 +110,103 @@ def render_copy_button(text_to_copy):
     return html_code
 
 def render_pdf_button(ai_content, ticker_name, dict_dfs):
-    """Render file PDF nhúng Font Roboto, ĐỒ THỊ KỸ THUẬT và BỐ CỤC 2 CỘT CHUYÊN NGHIỆP."""
-    current_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    """Render file PDF nhúng Font Roboto, ĐỒ THỊ CĂNG NGANG VÀ BẢNG THÔNG SỐ CHUYÊN SÂU."""
+    current_time = datetime.now().strftime("%d/%m/%Y")
     
-    # Tiền xử lý nội dung văn bản của AI
-    html_content = ai_content.replace('\n', '<br>').replace('**', '<b>')
+    # Tiền xử lý Markdown sang HTML chuẩn chỉnh
+    html_content = ai_content
+    html_content = re.sub(r'### (.*?)\n', r'<h3 style="color:#0078D4; font-size: 16px; margin-top: 25px; margin-bottom: 10px; border-bottom: 1px dashed #ddd; padding-bottom: 5px;">\1</h3>', html_content)
+    html_content = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', html_content)
     html_content = re.sub(r'\*(.*?)\*', r'<i>\1</i>', html_content)
+    html_content = html_content.replace('\n', '<br>')
     
-    # 1. Trích xuất dữ liệu tài chính từ RS_DATA cho Cột Trái
+    # 1. Trích xuất CHUYÊN SÂU dữ liệu từ RS_DATA và TA_DATA
     df_rs = dict_dfs.get("RS_DATA", pd.DataFrame()) if dict_dfs else pd.DataFrame()
-    stock_data = {}
-    if not df_rs.empty and ticker_name in df_rs['Mã CK'].values:
-        stock_data = df_rs[df_rs['Mã CK'] == ticker_name].iloc[0].to_dict()
+    df_ta = dict_dfs.get("TA_DATA", pd.DataFrame()) if dict_dfs else pd.DataFrame()
+    
+    stock_rs = df_rs[df_rs['Mã CK'] == ticker_name].iloc[0].to_dict() if not df_rs.empty and ticker_name in df_rs['Mã CK'].values else {}
+    stock_ta = df_ta[df_ta['Mã CK'] == ticker_name].iloc[0].to_dict() if not df_ta.empty and ticker_name in df_ta['Mã CK'].values else {}
         
-    def format_vn(val):
+    def format_num(val, is_percent=False, is_vol=False):
         try:
             if pd.isna(val): return "N/A"
             v = float(val)
-            if v.is_integer(): return str(int(v))
-            return f"{v:.2f}".replace('.', ',')
+            if is_vol: return f"{v:,.0f}"
+            res = f"{v:.2f}".replace('.', ',')
+            return f"{res}%" if is_percent else res
         except:
             return str(val)
 
-    gia_ht = format_vn(stock_data.get('Giá', 'N/A'))
-    pe = format_vn(stock_data.get('P/E', 'N/A'))
-    pb = format_vn(stock_data.get('P/B', 'N/A'))
-    roe = format_vn(stock_data.get('ROE (%)', 'N/A'))
+    gia_ht = format_num(stock_rs.get('Giá', 'N/A'))
+    pe = format_num(stock_rs.get('P/E', 'N/A'))
+    pb = format_num(stock_rs.get('P/B', 'N/A'))
+    roe = format_num(stock_rs.get('ROE (%)', 'N/A'), is_percent=True)
+    debt = format_num(stock_rs.get('Nợ/Vốn Chủ', 'N/A'))
     
-    # 2. Tạo mã Base64 cho biểu đồ (lấy từ TA_DATA để vẽ Hỗ trợ/Kháng cự)
-    df_ta = dict_dfs.get("TA_DATA", None) if dict_dfs else None
+    rs_1m = format_num(stock_rs.get('RS_1M', 'N/A'))
+    mfi = format_num(stock_rs.get('MFI_14', 'N/A'))
+    kl_20 = format_num(stock_rs.get('KL_TB_20', 'N/A'), is_vol=True)
+    
+    cloud_status = str(stock_ta.get('Trạng Thái Mây', 'N/A'))
+    kumo_signal = str(stock_ta.get('Tín Hiệu Kumo', 'N/A'))
+    
+    # 2. Tạo mã Base64 cho biểu đồ
     chart_base64 = generate_chart_base64(ticker_name, df_ta)
+    chart_html = f'<div style="margin-top: 30px; text-align: center;"><img src="{chart_base64}" style="width: 100%; border: 1px solid #E2E8F0; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"></div>' if chart_base64 else ""
     
-    chart_html = ""
-    if chart_base64:
-        chart_html = f'<div style="margin-top: 20px; border: 1px solid #ddd; padding: 10px; border-radius: 8px;"><img src="{chart_base64}" style="width: 100%; height: auto;"></div>'
-    
-    # 3. Xây dựng Bố cục 2 Cột (Chuẩn Institutional Report)
+    # 3. HTML Layout - Xây dựng form cực chuẩn giống Image
     raw_report_html = f"""
     <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,700;1,400&subset=vietnamese&display=swap" rel="stylesheet">
-    <div style="font-family: 'Roboto', sans-serif; padding: 40px; color: #333; line-height: 1.6; background-color: white; max-width: 1000px; margin: 0 auto;">
+    <div style="font-family: 'Roboto', sans-serif; padding: 0; color: #333; line-height: 1.6; background-color: white; max-width: 1000px; margin: 0 auto; box-sizing: border-box;">
         
-        <!-- HEADER BÁO CÁO -->
-        <div style="background: #0078D4; color: white; padding: 20px 30px; margin-bottom: 30px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center;">
+        <div style="background-color: #0078D4; color: white; padding: 40px; display: flex; justify-content: space-between; align-items: center;">
             <div>
-                <div style="font-size: 14px; text-transform: uppercase; letter-spacing: 2px; opacity: 0.8;">BÁO CÁO PHÂN TÍCH ĐỊNH LƯỢNG</div>
-                <div style="font-size: 32px; font-weight: 900; margin-top: 5px;">MÃ CỔ PHIẾU: {ticker_name}</div>
+                <div style="font-size: 14px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 5px;">BÁO CÁO CẬP NHẬT ĐỊNH LƯỢNG</div>
+                <div style="font-size: 38px; font-weight: 900; letter-spacing: 1px;">MÃ CỔ PHIẾU: {ticker_name}</div>
             </div>
             <div style="text-align: right;">
-                <div style="font-size: 20px; font-weight: 700;">LINANCE.CORE</div>
-                <div style="font-size: 12px; margin-top: 5px;">Ngày {current_time}</div>
+                <div style="font-size: 26px; font-weight: 900;">LINANCE<span style="color: #93C5FD;">.CORE</span></div>
+                <div style="font-size: 13px; margin-top: 5px;">Ngày {current_time}</div>
             </div>
         </div>
         
-        <!-- BODY 2 CỘT -->
-        <div style="display: flex; gap: 40px;">
-            <!-- CỘT TRÁI: DATA & CHART -->
-            <div style="flex: 1; min-width: 300px; border-right: 2px solid #f0f0f0; padding-right: 30px;">
-                <div style="font-size: 18px; font-weight: 700; color: #0078D4; border-bottom: 2px solid #0078D4; padding-bottom: 5px; margin-bottom: 15px;">THỐNG KÊ TÀI CHÍNH</div>
-                <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
-                    <tr style="border-bottom: 1px solid #eee;"><td style="padding: 8px 0; color: #555;">Giá hiện tại</td><td style="text-align:right; font-weight: bold;">{gia_ht}</td></tr>
-                    <tr style="border-bottom: 1px solid #eee;"><td style="padding: 8px 0; color: #555;">P/E định giá</td><td style="text-align:right; font-weight: bold;">{pe}</td></tr>
-                    <tr style="border-bottom: 1px solid #eee;"><td style="padding: 8px 0; color: #555;">P/B</td><td style="text-align:right; font-weight: bold;">{pb}</td></tr>
-                    <tr style="border-bottom: 1px solid #eee;"><td style="padding: 8px 0; color: #555;">ROE (%)</td><td style="text-align:right; font-weight: bold;">{roe}%</td></tr>
-                </table>
+        <div style="padding: 40px; padding-bottom: 0;">
+            <div style="display: flex; gap: 50px;">
                 
-                {chart_html}
-            </div>
-            
-            <!-- CỘT PHẢI: LUẬN ĐIỂM -->
-            <div style="flex: 2;">
-                <div style="font-size: 18px; font-weight: 700; color: #0078D4; border-bottom: 2px solid #0078D4; padding-bottom: 5px; margin-bottom: 15px;">KẾ HOẠCH GIAO DỊCH (ACTIONABLE PLAN)</div>
-                <div style="font-size: 14px; text-align: justify;">
-                    {html_content}
+                <div style="flex: 0 0 35%;">
+                    <div style="font-size: 24px; font-weight: 900; color: #0078D4; margin-bottom: 5px;">THỐNG KÊ TÀI CHÍNH</div>
+                    <div style="height: 3px; background-color: #0078D4; width: 100%; margin-bottom: 20px;"></div>
+                    
+                    <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+                        <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">Giá hiện tại</td><td style="text-align:right; font-weight: bold; font-size: 15px;">{gia_ht}</td></tr>
+                        <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">P/E định giá</td><td style="text-align:right; font-weight: bold;">{pe}</td></tr>
+                        <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">P/B</td><td style="text-align:right; font-weight: bold;">{pb}</td></tr>
+                        <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">ROE</td><td style="text-align:right; font-weight: bold;">{roe}</td></tr>
+                        <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">Nợ / Vốn chủ sở hữu</td><td style="text-align:right; font-weight: bold;">{debt}</td></tr>
+                        <tr><td colspan="2" style="padding: 15px 0 5px 0; font-weight: bold; color: #0078D4; font-size: 14px;">Chỉ Báo Kỹ Thuật & Dòng Tiền</td></tr>
+                        <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">Khối lượng TB (20 phiên)</td><td style="text-align:right; font-weight: bold;">{kl_20}</td></tr>
+                        <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">Sức mạnh giá (RS_1M)</td><td style="text-align:right; font-weight: bold;">{rs_1m}</td></tr>
+                        <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">Dòng tiền động lượng (MFI)</td><td style="text-align:right; font-weight: bold;">{mfi}</td></tr>
+                        <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">Trạng thái Ichimoku</td><td style="text-align:right; font-weight: bold; color: #EF4444;">{cloud_status}</td></tr>
+                        <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">Tín hiệu Kumo</td><td style="text-align:right; font-weight: bold; color: #0078D4;">{kumo_signal}</td></tr>
+                    </table>
+                </div>
+                
+                <div style="flex: 1;">
+                    <div style="font-size: 24px; font-weight: 900; color: #0078D4; margin-bottom: 5px;">KẾ HOẠCH GIAO DỊCH</div>
+                    <div style="height: 3px; background-color: #0078D4; width: 100%; margin-bottom: 20px;"></div>
+                    
+                    <div style="font-size: 14px; text-align: justify; line-height: 1.7; color: #1E293B;">
+                        {html_content}
+                    </div>
                 </div>
             </div>
+            
+            {chart_html}
+            
         </div>
         
-        <!-- FOOTER -->
-        <div style="margin-top: 50px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 10px; color: #999; text-align: center; font-style: italic;">
+        <div style="margin: 40px; padding-top: 20px; border-top: 1px solid #E2E8F0; font-size: 11px; color: #94A3B8; text-align: center; font-style: italic;">
             CONFIDENTIAL REPORT. Generated by LINANCE Quantitative AI System.<br>
             Disclaimer: Bản báo cáo này được tạo tự động bởi thuật toán định lượng. Nhà đầu tư tự chịu trách nhiệm với quyết định giải ngân.
         </div>
@@ -227,7 +237,7 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
             tempDiv.innerHTML = decodedHtml;
             
             var opt = {{
-              margin:       0.4,
+              margin:       0,
               filename:     '{file_name}',
               image:        {{ type: 'jpeg', quality: 0.98 }},
               html2canvas:  {{ scale: 2, useCORS: true }},
@@ -465,7 +475,7 @@ with st.sidebar:
 # 7. TRUNG TÂM XỬ LÝ CHATBOT AI AGENT
 # ==========================================
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Hệ thống xuất bản biểu đồ nến Tự động đã vào trạng thái trực chiến."}]
+    st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Giao diện báo cáo chuyên nghiệp chuẩn Shinhan đã được đồng bộ."}]
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -479,7 +489,7 @@ for message in st.session_state.messages:
             with col_btn1:
                 components.html(render_copy_button(message["content"]), height=35)
             with col_btn2:
-                ticker_match = re.search(r'\b[A-Z]{3}\b', message["content"])
+                ticker_match = re.search(r'\b[A-Z0-9]{3,4}\b', message["content"])
                 ticker_name = ticker_match.group(0) if ticker_match else "STOCK"
                 components.html(render_pdf_button(message["content"], ticker_name, dict_dfs), height=35)
 
@@ -627,7 +637,7 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn..."):
             with col_btn1:
                 components.html(render_copy_button(response.text), height=35)
             with col_btn2:
-                ticker_match = re.search(r'\b[A-Z]{3}\b', response.text)
+                ticker_match = re.search(r'\b[A-Z0-9]{3,4}\b', response.text)
                 ticker_name = ticker_match.group(0) if ticker_match else "STOCK"
                 components.html(render_pdf_button(response.text, ticker_name, dict_dfs), height=35)
             

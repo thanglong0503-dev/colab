@@ -554,7 +554,7 @@ with st.sidebar:
 # 7. TRUNG TÂM XỬ LÝ CHATBOT AI AGENT
 # ==========================================
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Lỗi cắt trang PDF và thông tin Footer đã được cập nhật thành công."}]
+    st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. . ."}]
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):

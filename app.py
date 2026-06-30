@@ -20,7 +20,6 @@ st.set_page_config(page_title="LINANCE TERMINAL", page_icon="CORE", layout="cent
 # 1. LÕI KỸ THUẬT: VẼ ĐỒ THỊ NẾN & MÃ HÓA BASE64
 # ==========================================
 def generate_chart_base64(ticker: str, df_ta: pd.DataFrame):
-    """Hàm vẽ đồ thị nến Nhật 30 phiên, CĂNG NGANG (Aspect Ratio 12:4)"""
     import yfinance as yf
     try:
         yf_ticker = f"{ticker}.VN" if not ticker.endswith(".VN") else ticker
@@ -36,7 +35,6 @@ def generate_chart_base64(ticker: str, df_ta: pd.DataFrame):
             tenkan_val = float(ta_data.get('Tenkan_sen', 0))
             kijun_val = float(ta_data.get('Kijun_sen', 0))
 
-        # Tăng figsize để biểu đồ căng ngang bề rộng trang PDF
         plt.style.use('dark_background')
         fig, ax = plt.subplots(figsize=(12, 4.5), dpi=200)
         fig.patch.set_facecolor('#0B0F17')
@@ -110,23 +108,21 @@ def render_copy_button(text_to_copy):
     return html_code
 
 def render_pdf_button(ai_content, ticker_name, dict_dfs):
-    """Render file PDF nhúng Font Roboto, ĐỒ THỊ CĂNG NGANG VÀ BẢNG THÔNG SỐ CHUYÊN SÂU."""
     current_time = datetime.now().strftime("%d/%m/%Y")
     
-    # Tiền xử lý Markdown sang HTML chuẩn chỉnh
     html_content = ai_content
     html_content = re.sub(r'### (.*?)\n', r'<h3 style="color:#0078D4; font-size: 16px; margin-top: 25px; margin-bottom: 10px; border-bottom: 1px dashed #ddd; padding-bottom: 5px;">\1</h3>', html_content)
     html_content = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', html_content)
     html_content = re.sub(r'\*(.*?)\*', r'<i>\1</i>', html_content)
     html_content = html_content.replace('\n', '<br>')
     
-    # 1. Trích xuất CHUYÊN SÂU dữ liệu từ RS_DATA và TA_DATA
     df_rs = dict_dfs.get("RS_DATA", pd.DataFrame()) if dict_dfs else pd.DataFrame()
     df_ta = dict_dfs.get("TA_DATA", pd.DataFrame()) if dict_dfs else pd.DataFrame()
     
     stock_rs = df_rs[df_rs['Mã CK'] == ticker_name].iloc[0].to_dict() if not df_rs.empty and ticker_name in df_rs['Mã CK'].values else {}
     stock_ta = df_ta[df_ta['Mã CK'] == ticker_name].iloc[0].to_dict() if not df_ta.empty and ticker_name in df_ta['Mã CK'].values else {}
-        
+    industry = stock_rs.get('Ngành', '')
+
     def format_num(val, is_percent=False, is_vol=False):
         try:
             if pd.isna(val): return "N/A"
@@ -142,24 +138,59 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
     pb = format_num(stock_rs.get('P/B', 'N/A'))
     roe = format_num(stock_rs.get('ROE (%)', 'N/A'), is_percent=True)
     debt = format_num(stock_rs.get('Nợ/Vốn Chủ', 'N/A'))
-    
     rs_1m = format_num(stock_rs.get('RS_1M', 'N/A'))
     mfi = format_num(stock_rs.get('MFI_14', 'N/A'))
     kl_20 = format_num(stock_rs.get('KL_TB_20', 'N/A'), is_vol=True)
-    
     cloud_status = str(stock_ta.get('Trạng Thái Mây', 'N/A'))
     kumo_signal = str(stock_ta.get('Tín Hiệu Kumo', 'N/A'))
     
-    # 2. Tạo mã Base64 cho biểu đồ
+    # ---------------------------------------------------------
+    # TRẠM SO SÁNH ĐỐI THỦ CÙNG NGÀNH (PEER COMPARISON)
+    # ---------------------------------------------------------
+    peer_html = ""
+    if industry and not df_rs.empty:
+        # Lấy 3 mã cùng ngành (loại trừ mã hiện tại), ưu tiên điểm RS cao nhất
+        peers_df = df_rs[(df_rs['Ngành'] == industry) & (df_rs['Mã CK'] != ticker_name)].sort_values(by='RS_1M', ascending=False).head(3)
+        if not peers_df.empty:
+            peer_rows = f"<tr style='background-color: #EBF5FF;'><td style='font-weight: bold; padding: 8px;'>{ticker_name}</td><td style='font-weight: bold;'>{pe}</td><td style='font-weight: bold;'>{pb}</td><td style='font-weight: bold;'>{roe}</td><td style='font-weight: bold; color: #0078D4;'>{rs_1m}</td></tr>"
+            
+            for _, row in peers_df.iterrows():
+                p_ticker = row.get('Mã CK', 'N/A')
+                p_pe = format_num(row.get('P/E', 'N/A'))
+                p_pb = format_num(row.get('P/B', 'N/A'))
+                p_roe = format_num(row.get('ROE (%)', 'N/A'), is_percent=True)
+                p_rs = format_num(row.get('RS_1M', 'N/A'))
+                peer_rows += f"<tr style='border-bottom: 1px solid #E2E8F0;'><td style='padding: 8px;'>{p_ticker}</td><td>{p_pe}</td><td>{p_pb}</td><td>{p_roe}</td><td>{p_rs}</td></tr>"
+            
+            peer_html = f"""
+            <div style="margin-top: 25px; margin-bottom: 15px;">
+                <div style="font-size: 15px; font-weight: 700; color: #0078D4; margin-bottom: 10px;">SO SÁNH CÙNG NGÀNH ({industry.upper()})</div>
+                <table style="width: 100%; font-size: 13px; border-collapse: collapse; text-align: center; border: 1px solid #E2E8F0;">
+                    <tr style="background-color: #0078D4; color: white;">
+                        <th style="padding: 10px;">Mã CK</th>
+                        <th style="padding: 10px;">P/E</th>
+                        <th style="padding: 10px;">P/B</th>
+                        <th style="padding: 10px;">ROE</th>
+                        <th style="padding: 10px;">RS 1M</th>
+                    </tr>
+                    {peer_rows}
+                </table>
+            </div>
+            """
+
+    # Tạo mã Base64 cho biểu đồ
     chart_base64 = generate_chart_base64(ticker_name, df_ta)
-    chart_html = f'<div style="margin-top: 30px; text-align: center;"><img src="{chart_base64}" style="width: 100%; border: 1px solid #E2E8F0; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"></div>' if chart_base64 else ""
+    chart_html = f'<div style="margin-top: 30px; text-align: center; position: relative; z-index: 2;"><img src="{chart_base64}" style="width: 100%; border: 1px solid #E2E8F0; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"></div>' if chart_base64 else ""
     
-    # 3. HTML Layout - Xây dựng form cực chuẩn giống Image
+    # SVG Watermark Background chống sao chép
+    watermark_url = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><text x='50%' y='50%' font-size='35' fill='%230078D4' fill-opacity='0.03' font-family='Arial' font-weight='bold' text-anchor='middle' transform='rotate(-45 150 150)'>LINANCE.CORE</text></svg>"
+    
+    # 3. HTML Layout 
     raw_report_html = f"""
     <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,700;1,400&subset=vietnamese&display=swap" rel="stylesheet">
-    <div style="font-family: 'Roboto', sans-serif; padding: 0; color: #333; line-height: 1.6; background-color: white; max-width: 1000px; margin: 0 auto; box-sizing: border-box;">
+    <div style="font-family: 'Roboto', sans-serif; padding: 0; color: #333; line-height: 1.6; background-color: white; max-width: 1000px; margin: 0 auto; box-sizing: border-box; background-image: url(\"{watermark_url}\"); background-repeat: repeat;">
         
-        <div style="background-color: #0078D4; color: white; padding: 40px; display: flex; justify-content: space-between; align-items: center;">
+        <div style="background-color: #0078D4; color: white; padding: 40px; display: flex; justify-content: space-between; align-items: center; position: relative; z-index: 2;">
             <div>
                 <div style="font-size: 14px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 5px;">BÁO CÁO CẬP NHẬT ĐỊNH LƯỢNG</div>
                 <div style="font-size: 38px; font-weight: 900; letter-spacing: 1px;">MÃ CỔ PHIẾU: {ticker_name}</div>
@@ -170,14 +201,14 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
             </div>
         </div>
         
-        <div style="padding: 40px; padding-bottom: 0;">
+        <div style="padding: 40px; padding-bottom: 0; position: relative; z-index: 2;">
             <div style="display: flex; gap: 50px;">
                 
                 <div style="flex: 0 0 35%;">
                     <div style="font-size: 24px; font-weight: 900; color: #0078D4; margin-bottom: 5px;">THỐNG KÊ TÀI CHÍNH</div>
                     <div style="height: 3px; background-color: #0078D4; width: 100%; margin-bottom: 20px;"></div>
                     
-                    <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+                    <table style="width: 100%; font-size: 13px; border-collapse: collapse; background: rgba(255,255,255,0.8);">
                         <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">Giá hiện tại</td><td style="text-align:right; font-weight: bold; font-size: 15px;">{gia_ht}</td></tr>
                         <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">P/E định giá</td><td style="text-align:right; font-weight: bold;">{pe}</td></tr>
                         <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">P/B</td><td style="text-align:right; font-weight: bold;">{pb}</td></tr>
@@ -186,7 +217,7 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
                         <tr><td colspan="2" style="padding: 15px 0 5px 0; font-weight: bold; color: #0078D4; font-size: 14px;">Chỉ Báo Kỹ Thuật & Dòng Tiền</td></tr>
                         <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">Khối lượng TB (20 phiên)</td><td style="text-align:right; font-weight: bold;">{kl_20}</td></tr>
                         <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">Sức mạnh giá (RS_1M)</td><td style="text-align:right; font-weight: bold;">{rs_1m}</td></tr>
-                        <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">Dòng tiền động lượng (MFI)</td><td style="text-align:right; font-weight: bold;">{mfi}</td></tr>
+                        <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">Dòng tiền (MFI)</td><td style="text-align:right; font-weight: bold;">{mfi}</td></tr>
                         <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">Trạng thái Ichimoku</td><td style="text-align:right; font-weight: bold; color: #EF4444;">{cloud_status}</td></tr>
                         <tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 10px 0; color: #475569;">Tín hiệu Kumo</td><td style="text-align:right; font-weight: bold; color: #0078D4;">{kumo_signal}</td></tr>
                     </table>
@@ -199,6 +230,8 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
                     <div style="font-size: 14px; text-align: justify; line-height: 1.7; color: #1E293B;">
                         {html_content}
                     </div>
+                    
+                    {peer_html}
                 </div>
             </div>
             
@@ -206,14 +239,20 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
             
         </div>
         
-        <div style="margin: 40px; padding-top: 20px; border-top: 1px solid #E2E8F0; font-size: 11px; color: #94A3B8; text-align: center; font-style: italic;">
-            CONFIDENTIAL REPORT. Generated by LINANCE Quantitative AI System.<br>
-            Disclaimer: Bản báo cáo này được tạo tự động bởi thuật toán định lượng. Nhà đầu tư tự chịu trách nhiệm với quyết định giải ngân.
+        <div style="margin: 40px; padding-top: 20px; border-top: 2px solid #0078D4; display: flex; justify-content: space-between; align-items: flex-start; position: relative; z-index: 2; background: rgba(255,255,255,0.9);">
+            <div style="font-size: 13px; color: #1E293B; line-height: 1.5;">
+                <b style="color: #0078D4; font-size: 15px;">Nguyễn Đào Thăng Long</b><br>
+                Chuyên viên Tư vấn Quản lý Tài sản<br>
+                <b>Chứng khoán Mirae Asset Vietnam (MAS)</b>
+            </div>
+            <div style="font-size: 11px; color: #94A3B8; text-align: right; font-style: italic; max-width: 450px; line-height: 1.4;">
+                CONFIDENTIAL REPORT. Generated by LINANCE Quantitative AI System.<br>
+                Disclaimer: Báo cáo được tạo tự động bởi thuật toán định lượng dựa trên dữ liệu hiện hành. Nhà đầu tư tự chịu trách nhiệm và quản trị rủi ro đối với quyết định giải ngân.
+            </div>
         </div>
     </div>
     """
     
-    # 4. Đóng gói Base64 và tạo Nút xuất PDF
     b64_html = base64.b64encode(raw_report_html.encode('utf-8')).decode('utf-8')
     file_name = f"LINANCE_{ticker_name}_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf"
     
@@ -475,7 +514,7 @@ with st.sidebar:
 # 7. TRUNG TÂM XỬ LÝ CHATBOT AI AGENT
 # ==========================================
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Giao diện báo cáo chuyên nghiệp chuẩn Shinhan đã được đồng bộ."}]
+    st.session_state.messages = [{"role": "assistant", "content": "LINANCE CORE ONLINE. Hệ thống báo cáo đã được nâng cấp với Bộ quét Đối thủ cùng ngành và Danh thiếp tự động."}]
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):

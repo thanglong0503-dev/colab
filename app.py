@@ -230,7 +230,7 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
         <div style="background-color: #0078D4; color: white; padding: 40px; display: flex; justify-content: space-between; align-items: center; position: relative; z-index: 2;">
             <div>
                 <div style="font-size: 14px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 5px;">BÁO CÁO CẬP NHẬT ĐỊNH LƯỢNG</div>
-                <div style="font-size: 38px; font-weight: 900; letter-spacing: 1px;">MẠ CỔ PHIẾU: {ticker_name}</div>
+                <div style="font-size: 38px; font-weight: 900; letter-spacing: 1px;">MÃ CỔ PHIẾU: {ticker_name}</div>
             </div>
             <div style="text-align: right;">
                 <div style="font-size: 26px; font-weight: 900;">LINANCE<span style="color: #93C5FD;">.CORE</span></div>

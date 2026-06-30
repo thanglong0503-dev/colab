@@ -119,37 +119,83 @@ def render_copy_button(text_to_copy):
     return html_code
 
 def render_pdf_button(ai_content, ticker_name, dict_dfs):
-    """Render file PDF nhúng Font Roboto và NHÚNG ĐỒ THỊ KỸ THUẬT."""
+    """Render file PDF nhúng Font Roboto, ĐỒ THỊ KỸ THUẬT và BỐ CỤC 2 CỘT CHUYÊN NGHIỆP."""
     current_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    
+    # Tiền xử lý nội dung văn bản của AI
     html_content = ai_content.replace('\n', '<br>').replace('**', '<b>')
     html_content = re.sub(r'\*(.*?)\*', r'<i>\1</i>', html_content)
     
-    # Tạo mã Base64 cho biểu đồ
+    # 1. Trích xuất dữ liệu tài chính từ RS_DATA cho Cột Trái
+    df_rs = dict_dfs.get("RS_DATA", pd.DataFrame()) if dict_dfs else pd.DataFrame()
+    stock_data = {}
+    if not df_rs.empty and ticker_name in df_rs['Mã CK'].values:
+        stock_data = df_rs[df_rs['Mã CK'] == ticker_name].iloc[0].to_dict()
+        
+    def format_vn(val):
+        try:
+            if pd.isna(val): return "N/A"
+            v = float(val)
+            if v.is_integer(): return str(int(v))
+            return f"{v:.2f}".replace('.', ',')
+        except:
+            return str(val)
+
+    gia_ht = format_vn(stock_data.get('Giá', 'N/A'))
+    pe = format_vn(stock_data.get('P/E', 'N/A'))
+    pb = format_vn(stock_data.get('P/B', 'N/A'))
+    roe = format_vn(stock_data.get('ROE (%)', 'N/A'))
+    
+    # 2. Tạo mã Base64 cho biểu đồ (lấy từ TA_DATA để vẽ Hỗ trợ/Kháng cự)
     df_ta = dict_dfs.get("TA_DATA", None) if dict_dfs else None
     chart_base64 = generate_chart_base64(ticker_name, df_ta)
     
-    # Chèn thẻ <img> nếu biểu đồ được tạo thành công
     chart_html = ""
     if chart_base64:
-        chart_html = f"""
-        <div style="margin: 20px 0; text-align: center; background: #0B0F17; padding: 15px; border-radius: 10px; border: 1px solid #333;">
-            <img src="{chart_base64}" style="max-width: 100%; height: auto; border-radius: 8px;">
-        </div>
-        """
+        chart_html = f'<div style="margin-top: 20px; border: 1px solid #ddd; padding: 10px; border-radius: 8px;"><img src="{chart_base64}" style="width: 100%; height: auto;"></div>'
     
+    # 3. Xây dựng Bố cục 2 Cột (Chuẩn Institutional Report)
     raw_report_html = f"""
     <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,700;1,400&subset=vietnamese&display=swap" rel="stylesheet">
-    <div style="font-family: 'Roboto', sans-serif; padding: 40px; color: #333; line-height: 1.6; background-color: white;">
-        <div style="border-bottom: 2px solid #0A84FF; padding-bottom: 10px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: baseline;">
-            <div style="font-size: 24px; font-weight: 900; color: #0B0F17;">LINANCE<span style="color: #0A84FF;">.CORE</span></div>
-            <div style="font-size: 12px; color: #666; font-family: monospace;">Issued: {current_time}</div>
+    <div style="font-family: 'Roboto', sans-serif; padding: 40px; color: #333; line-height: 1.6; background-color: white; max-width: 1000px; margin: 0 auto;">
+        
+        <!-- HEADER BÁO CÁO -->
+        <div style="background: #0078D4; color: white; padding: 20px 30px; margin-bottom: 30px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <div style="font-size: 14px; text-transform: uppercase; letter-spacing: 2px; opacity: 0.8;">BÁO CÁO PHÂN TÍCH ĐỊNH LƯỢNG</div>
+                <div style="font-size: 32px; font-weight: 900; margin-top: 5px;">MÃ CỔ PHIẾU: {ticker_name}</div>
+            </div>
+            <div style="text-align: right;">
+                <div style="font-size: 20px; font-weight: 700;">LINANCE.CORE</div>
+                <div style="font-size: 12px; margin-top: 5px;">Ngày {current_time}</div>
+            </div>
         </div>
         
-        {chart_html}
-        
-        <div style="font-size: 14px; text-align: justify; margin-top: 20px;">
-            {html_content}
+        <!-- BODY 2 CỘT -->
+        <div style="display: flex; gap: 40px;">
+            <!-- CỘT TRÁI: DATA & CHART -->
+            <div style="flex: 1; min-width: 300px; border-right: 2px solid #f0f0f0; padding-right: 30px;">
+                <div style="font-size: 18px; font-weight: 700; color: #0078D4; border-bottom: 2px solid #0078D4; padding-bottom: 5px; margin-bottom: 15px;">THỐNG KÊ TÀI CHÍNH</div>
+                <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+                    <tr style="border-bottom: 1px solid #eee;"><td style="padding: 8px 0; color: #555;">Giá hiện tại</td><td style="text-align:right; font-weight: bold;">{gia_ht}</td></tr>
+                    <tr style="border-bottom: 1px solid #eee;"><td style="padding: 8px 0; color: #555;">P/E định giá</td><td style="text-align:right; font-weight: bold;">{pe}</td></tr>
+                    <tr style="border-bottom: 1px solid #eee;"><td style="padding: 8px 0; color: #555;">P/B</td><td style="text-align:right; font-weight: bold;">{pb}</td></tr>
+                    <tr style="border-bottom: 1px solid #eee;"><td style="padding: 8px 0; color: #555;">ROE (%)</td><td style="text-align:right; font-weight: bold;">{roe}%</td></tr>
+                </table>
+                
+                {chart_html}
+            </div>
+            
+            <!-- CỘT PHẢI: LUẬN ĐIỂM -->
+            <div style="flex: 2;">
+                <div style="font-size: 18px; font-weight: 700; color: #0078D4; border-bottom: 2px solid #0078D4; padding-bottom: 5px; margin-bottom: 15px;">KẾ HOẠCH GIAO DỊCH (ACTIONABLE PLAN)</div>
+                <div style="font-size: 14px; text-align: justify;">
+                    {html_content}
+                </div>
+            </div>
         </div>
+        
+        <!-- FOOTER -->
         <div style="margin-top: 50px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 10px; color: #999; text-align: center; font-style: italic;">
             CONFIDENTIAL REPORT. Generated by LINANCE Quantitative AI System.<br>
             Disclaimer: Bản báo cáo này được tạo tự động bởi thuật toán định lượng. Nhà đầu tư tự chịu trách nhiệm với quyết định giải ngân.
@@ -157,6 +203,7 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
     </div>
     """
     
+    # 4. Đóng gói Base64 và tạo Nút xuất PDF
     b64_html = base64.b64encode(raw_report_html.encode('utf-8')).decode('utf-8')
     file_name = f"LINANCE_{ticker_name}_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf"
     
@@ -167,7 +214,7 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
         .pdf-btn {{ background-color: transparent; color: #10B981; border: 1px solid rgba(16, 185, 129, 0.5); border-radius: 6px; padding: 6px 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; display: inline-flex; align-items: center; justify-content: center; }}
         .pdf-btn:hover {{ background-color: #10B981; color: #FFFFFF; box-shadow: 0 0 10px rgba(16, 185, 129, 0.4); border: 1px solid #10B981; }}
         </style>
-        <button class="pdf-btn" id="dlPdfBtn" onclick="exportPDF()">EXPORT PDF</button>
+        <button class="pdf-btn" id="dlPdfBtn" onclick="exportPDF()">📥 EXPORT PDF</button>
         <script>
         function exportPDF() {{
             document.getElementById("dlPdfBtn").innerText = "⏳ GENERATING...";
@@ -180,7 +227,7 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
             tempDiv.innerHTML = decodedHtml;
             
             var opt = {{
-              margin:       0.5,
+              margin:       0.4,
               filename:     '{file_name}',
               image:        {{ type: 'jpeg', quality: 0.98 }},
               html2canvas:  {{ scale: 2, useCORS: true }},
@@ -190,7 +237,7 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
             setTimeout(() => {{
                 html2pdf().set(opt).from(tempDiv).save().then(function() {{
                     document.getElementById("dlPdfBtn").innerText = "✅ DOWNLOADED!";
-                    setTimeout(() => document.getElementById("dlPdfBtn").innerText = "EXPORT PDF", 3000);
+                    setTimeout(() => document.getElementById("dlPdfBtn").innerText = "📥 EXPORT PDF", 3000);
                 }});
             }}, 500);
         }}

@@ -140,8 +140,86 @@ def render_copy_button(text_to_copy):
     </body>
     """
     return html_code
+def render_price_range_svg(plan: dict) -> str:
+    """Vẽ thanh SVG trực quan: Stop-loss --- Entry --- Giá hiện tại --- Take-profit"""
+    if not plan or not plan.get("valid"):
+        return ""
+    try:
+        sl = plan["stop_loss"]; el = plan["entry_low"]; eh = plan["entry_high"]
+        tp = plan["take_profit"]; cp = plan["current_price"]
 
-def render_pdf_button(ai_content, ticker_name, dict_dfs):
+        lo = min(sl, el, cp) * 0.98
+        hi = max(tp, cp) * 1.02
+        span = hi - lo
+        def x(v): return 40 + ((v - lo) / span) * 720  # width canvas 800, margin 40
+
+        entry_x1, entry_x2 = x(el), x(eh)
+        sl_x, tp_x, cp_x = x(sl), x(tp), x(cp)
+
+        svg = f"""
+        <svg width="100%" viewBox="0 0 800 130" xmlns="http://www.w3.org/2000/svg" style="font-family:'Roboto',sans-serif;">
+            <line x1="40" y1="65" x2="760" y2="65" stroke="#CBD5E1" stroke-width="3" stroke-linecap="round"/>
+            <rect x="{entry_x1:.1f}" y="58" width="{max(entry_x2-entry_x1,4):.1f}" height="14" rx="4" fill="#0078D4" opacity="0.85"/>
+            <line x1="{sl_x:.1f}" y1="45" x2="{sl_x:.1f}" y2="85" stroke="#EF4444" stroke-width="4"/>
+            <line x1="{tp_x:.1f}" y1="45" x2="{tp_x:.1f}" y2="85" stroke="#10B981" stroke-width="4"/>
+            <circle cx="{cp_x:.1f}" cy="65" r="6" fill="#1E293B" stroke="white" stroke-width="2"/>
+
+            <text x="{sl_x:.1f}" y="105" text-anchor="middle" font-size="13" fill="#EF4444" font-weight="700">CẮT LỖ</text>
+            <text x="{sl_x:.1f}" y="122" text-anchor="middle" font-size="13" fill="#EF4444">{sl:,.0f}</text>
+
+            <text x="{(entry_x1+entry_x2)/2:.1f}" y="30" text-anchor="middle" font-size="13" fill="#0078D4" font-weight="700">VÙNG MUA</text>
+            <text x="{(entry_x1+entry_x2)/2:.1f}" y="105" text-anchor="middle" font-size="12" fill="#0078D4">{el:,.0f}-{eh:,.0f}</text>
+
+            <text x="{tp_x:.1f}" y="105" text-anchor="middle" font-size="13" fill="#10B981" font-weight="700">CHỐT LỜI</text>
+            <text x="{tp_x:.1f}" y="122" text-anchor="middle" font-size="13" fill="#10B981">{tp:,.0f}</text>
+
+            <text x="{cp_x:.1f}" y="30" text-anchor="middle" font-size="12" fill="#1E293B" font-weight="700">GIÁ HIỆN TẠI: {cp:,.0f}</text>
+        </svg>
+        """
+        return svg
+    except Exception:
+        return ""
+
+
+def render_trade_plan_card_html(plan: dict) -> str:
+    if not plan:
+        return ""
+    if not plan.get("valid"):
+        return f"""
+        <div class="avoid-break" style="margin: 20px 0; padding: 18px; background: #FEF2F2; border: 1px solid #FCA5A5; border-radius: 10px;">
+            <div style="font-weight:700; color:#B91C1C; font-size:14px;">⚠ CHƯA ĐỦ ĐIỀU KIỆN THIẾT LẬP GIAO DỊCH</div>
+            <div style="font-size:12px; color:#7F1D1D; margin-top:5px;">{plan.get('reason','')}</div>
+        </div>
+        """
+
+    rr = plan['rr_ratio']
+    rr_color = "#10B981" if rr >= 2 else ("#F59E0B" if rr >= 1.2 else "#EF4444")
+    position_html = ""
+    if "max_shares" in plan:
+        position_html = f"""
+        <tr style="border-top:1px solid #E2E8F0;">
+            <td style="padding:8px 0; color:#475569;">Khối lượng tối đa</td>
+            <td style="text-align:right; font-weight:700;">{plan['max_shares']:,} CP</td>
+        </tr>
+        <tr>
+            <td style="padding:8px 0; color:#475569;">Giá trị vị thế / % NAV</td>
+            <td style="text-align:right; font-weight:700;">{plan['position_value']:,.0f} ({plan['position_pct_of_nav']}%)</td>
+        </tr>
+        """
+
+    return f"""
+    <div class="avoid-break" style="margin: 20px 0; padding: 20px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px;">
+        <div style="font-size:15px; font-weight:900; color:#0078D4; margin-bottom:12px;">THIẾT LẬP GIAO DỊCH ĐỊNH LƯỢNG (ATR14 + Ichimoku)</div>
+        {render_price_range_svg(plan)}
+        <table style="width:100%; font-size:13px; border-collapse:collapse; margin-top:10px;">
+            <tr><td style="padding:8px 0; color:#475569;">ATR(14) - Biến động</td><td style="text-align:right; font-weight:700;">{plan['atr14']:,.0f}</td></tr>
+            <tr style="border-top:1px solid #E2E8F0;"><td style="padding:8px 0; color:#475569;">Rủi ro / cổ phiếu</td><td style="text-align:right; font-weight:700;">{plan['risk_per_share']:,.0f}</td></tr>
+            <tr style="border-top:1px solid #E2E8F0;"><td style="padding:8px 0; color:#475569;">Tỷ lệ R:R</td><td style="text-align:right; font-weight:900; color:{rr_color};">{rr} : 1</td></tr>
+            {position_html}
+        </table>
+    </div>
+    """
+def render_pdf_button(ai_content, ticker_name, dict_dfs, trade_plan=None):
     current_time = datetime.now().strftime("%d/%m/%Y")
     
     html_content = ai_content
@@ -237,7 +315,21 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
                 <div style="font-size: 13px; margin-top: 5px;">Ngày {current_time}</div>
             </div>
         </div>
-        
+        df_rs_full = dict_dfs.get("RS_DATA", pd.DataFrame()) if dict_dfs else pd.DataFrame()
+    tscore_row = df_rs_full[df_rs_full['Mã CK'] == ticker_name] if not df_rs_full.empty else pd.DataFrame()
+    tscore = int(tscore_row.iloc[0].get('Tech_Score', 0)) if not tscore_row.empty else 0
+    if tscore >= 6: tier_label, tier_color = "S-TIER — KHẢ QUAN MẠNH", "#FFD700"
+    elif tscore >= 3: tier_label, tier_color = "A-TIER — KHẢ QUAN", "#10B981"
+    elif tscore >= -2: tier_label, tier_color = "B-TIER — TRUNG TÍNH", "#0A84FF"
+    else: tier_label, tier_color = "C-TIER — TIÊU CỰC", "#EF4444"
+
+    tier_badge_html = f"""
+    <div class="avoid-break" style="padding: 14px 40px; background:#0F172A; display:flex; justify-content:space-between; align-items:center;">
+        <div style="color:{tier_color}; font-weight:900; font-size:14px; letter-spacing:1px;">XẾP HẠNG ĐỊNH LƯỢNG: {tier_label}</div>
+        <div style="color:#94A3B8; font-size:11px;">Tech Score: {tscore} | Mã báo cáo: LC-{ticker_name}-{datetime.now().strftime('%Y%m%d')}</div>
+    </div>
+    """
+    trade_plan_html = render_trade_plan_card_html(trade_plan)
         <div style="padding: 40px; padding-bottom: 0; position: relative; z-index: 2;">
             <div style="display: flex; gap: 50px;">
                 
@@ -260,14 +352,18 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs):
                     </table>
                 </div>
                 
+                ...
+    <div style="background-color: #0078D4; ...">...</div>
+    {tier_badge_html}
+    <div style="padding: 40px; ...">
+        ...
                 <div style="flex: 1;">
-                    <div style="font-size: 24px; font-weight: 900; color: #0078D4; margin-bottom: 5px;">KẾ HOẠCH GIAO DỊCH</div>
-                    <div style="height: 3px; background-color: #0078D4; width: 100%; margin-bottom: 20px;"></div>
-                    
-                    <div style="font-size: 14px; text-align: justify; line-height: 1.7; color: #1E293B;">
+                    <div style="font-size: 24px; ...">KẾ HOẠCH GIAO DỊCH</div>
+                    <div style="height: 3px; ..."></div>
+                    {trade_plan_html}
+                    <div style="font-size: 14px; ...">
                         {html_content}
                     </div>
-                    
                     {peer_html}
                 </div>
             </div>
@@ -695,7 +791,7 @@ for message in st.session_state.messages:
             with col_btn2:
                 ticker_match = re.search(r'\b[A-Z0-9]{3,4}\b', message["content"])
                 ticker_name = ticker_match.group(0) if ticker_match else "STOCK"
-                components.html(render_pdf_button(message["content"], ticker_name, dict_dfs), height=35)
+                components.html(render_pdf_button(message["content"], ticker_name, dict_dfs, message.get("trade_plan")), height=35)
 
 if prompt := st.chat_input("Nhập mã CK hoặc truy vấn..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -856,7 +952,7 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn..."):
             with col_btn2:
                 ticker_match = re.search(r'\b[A-Z0-9]{3,4}\b', response.text)
                 ticker_name = ticker_match.group(0) if ticker_match else "STOCK"
-                components.html(render_pdf_button(response.text, ticker_name, dict_dfs), height=35)
+                components.html(render_pdf_button(response.text, ticker_name, dict_dfs, plan if ticker_detect else None), height=35)
             
             if chart_data_to_save is not None:
                 st.line_chart(chart_data_to_save)
@@ -864,4 +960,5 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn..."):
             new_msg = {"role": "assistant", "content": response.text}
             if chart_data_to_save is not None:
                 new_msg["chart"] = chart_data_to_save
+            new_msg["trade_plan"] = plan if ticker_detect else None   # <-- thêm dòng này
             st.session_state.messages.append(new_msg)

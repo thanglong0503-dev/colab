@@ -494,6 +494,125 @@ def get_live_stock_data(ticker: str) -> str:
 
 def draw_technical_chart(ticker: str) -> str:
     return f"[SYSTEM CHART COMMAND TRIGGERED] Hãy xác nhận bằng văn bản rằng đồ thị kỹ thuật mã {ticker} đang được hiển thị ngay bên dưới đoạn hội thoại."
+def calculate_trade_plan(ticker: str, df_ta: pd.DataFrame, nav: float = None,
+                          risk_pct: float = None, rr_target: float = 2.0) -> dict:
+    """
+    TÍNH TOÁN THỰC (deterministic) vùng mua / cắt lỗ / chốt lời / khối lượng.
+    AI KHÔNG được tự suy diễn các con số này — chỉ được phép diễn giải kết quả.
+    """
+    import yfinance as yf
+
+    result = {"valid": False, "reason": "", "ticker": ticker}
+    try:
+        yf_ticker = f"{ticker}.VN" if not ticker.endswith(".VN") else ticker
+        stock = yf.Ticker(yf_ticker)
+        hist = stock.history(period="90d")
+        if hist.empty or len(hist) < 20:
+            result["reason"] = "Không đủ dữ liệu giá lịch sử để tính toán."
+            return result
+
+        try:
+            current_price = float(stock.fast_info['lastPrice'])
+            if current_price < 1000:
+                current_price *= 1000
+        except Exception:
+            current_price = float(hist['Close'].iloc[-1])
+
+        # --- ATR(14): đo biến động thực để đặt Stop-loss theo rủi ro thật của từng mã ---
+        high_low = hist['High'] - hist['Low']
+        high_close = (hist['High'] - hist['Close'].shift()).abs()
+        low_close = (hist['Low'] - hist['Close'].shift()).abs()
+        true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        atr14 = true_range.rolling(14).mean().iloc[-1]
+
+        if pd.isna(atr14) or atr14 <= 0:
+            result["reason"] = "Không tính được ATR (biến động) cho mã này."
+            return result
+
+        # --- Kijun-sen / Tenkan-sen từ TA_DATA (nếu có) ---
+        kijun_val = None
+        if df_ta is not None and not df_ta.empty and ticker in df_ta['Mã CK'].values:
+            ta_row = df_ta[df_ta['Mã CK'] == ticker].iloc[0].to_dict()
+            try:
+                kijun_val = float(ta_row.get('Kijun_sen', 0)) or None
+            except Exception:
+                pass
+
+        # --- VÙNG MUA: quanh giá hiện tại, biên độ theo ATR ---
+        entry_low = current_price - 0.5 * atr14
+        entry_high = current_price + 0.3 * atr14
+
+        # --- STOP-LOSS: ưu tiên Kijun-sen nếu hợp lý (≤3 ATR dưới giá), nếu không dùng ATR-stop ---
+        atr_based_stop = current_price - 1.5 * atr14
+        if kijun_val and 0 < kijun_val < current_price and (current_price - kijun_val) <= 3 * atr14:
+            stop_loss = min(kijun_val, entry_low) - 0.1 * atr14
+            stop_reason = f"Dưới Kijun-sen ({kijun_val:,.0f}), đệm 0.1 ATR"
+        else:
+            stop_loss = atr_based_stop
+            stop_reason = "Kijun-sen không hợp lệ/quá xa → dùng Stop theo ATR (1.5x)"
+
+        risk_per_share = entry_low - stop_loss
+        if risk_per_share <= 0:
+            result["reason"] = "Thiết lập không hợp lệ: Stop-loss cao hơn/bằng vùng mua."
+            return result
+
+        take_profit = entry_low + risk_per_share * rr_target
+        actual_rr = round((take_profit - entry_low) / risk_per_share, 2)
+
+        result.update({
+            "valid": True,
+            "current_price": round(current_price, 0),
+            "atr14": round(atr14, 0),
+            "entry_low": round(entry_low, 0),
+            "entry_high": round(entry_high, 0),
+            "stop_loss": round(stop_loss, 0),
+            "stop_reason": stop_reason,
+            "take_profit": round(take_profit, 0),
+            "risk_per_share": round(risk_per_share, 0),
+            "rr_ratio": actual_rr,
+        })
+
+        if nav and risk_pct and nav > 0 and risk_pct > 0:
+            risk_amount = nav * (risk_pct / 100)
+            max_shares = int((risk_amount / risk_per_share) // 100) * 100  # làm tròn xuống lô 100 (HOSE)
+            position_value = max_shares * entry_low
+            result.update({
+                "nav": nav, "risk_pct": risk_pct,
+                "risk_amount": round(risk_amount, 0),
+                "max_shares": max_shares,
+                "position_value": round(position_value, 0),
+                "position_pct_of_nav": round((position_value / nav) * 100, 1),
+            })
+        return result
+    except Exception as e:
+        result["reason"] = f"Lỗi hệ thống khi tính toán: {e}"
+        return result
+
+
+def format_trade_plan_facts(plan: dict) -> str:
+    if not plan.get("valid"):
+        return (f"[SYSTEM_FACTS - THIẾT LẬP GIAO DỊCH {plan.get('ticker','')}]\n"
+                f"KHÔNG ĐỦ ĐIỀU KIỆN TÍNH TOÁN: {plan.get('reason')}\n"
+                f"=> AI BẮT BUỘC trả lời rằng CHƯA ĐỦ CƠ SỞ để đưa kế hoạch giao dịch cụ thể "
+                f"(được phép đứng ngoài), TUYỆT ĐỐI không tự bịa vùng mua/stop/TP.\n")
+
+    lines = [
+        f"[SYSTEM_FACTS - THIẾT LẬP GIAO DỊCH ĐÃ TÍNH SẴN CHO {plan['ticker']} (dùng ATR14 + Kijun-sen)]",
+        f"Giá hiện tại: {plan['current_price']:,.0f}",
+        f"ATR(14) - biến động trung bình: {plan['atr14']:,.0f}",
+        f"VÙNG MUA (Entry): {plan['entry_low']:,.0f} - {plan['entry_high']:,.0f}",
+        f"CẮT LỖ CỨNG (Stop-loss): {plan['stop_loss']:,.0f}  [Lý do: {plan['stop_reason']}]",
+        f"CHỐT LỜI (Take-profit): {plan['take_profit']:,.0f}",
+        f"Rủi ro/cổ phiếu: {plan['risk_per_share']:,.0f} | Tỷ lệ R:R thực tế: {plan['rr_ratio']}",
+    ]
+    if "max_shares" in plan:
+        lines += [
+            f"NAV: {plan['nav']:,.0f} | Rủi ro chấp nhận: {plan['risk_pct']}% ({plan['risk_amount']:,.0f} VNĐ)",
+            f"KHỐI LƯỢNG TỐI ĐA ĐƯỢC MUA: {plan['max_shares']:,} CP (đã làm tròn lô 100)",
+            f"Giá trị vị thế: {plan['position_value']:,.0f} VNĐ (~{plan['position_pct_of_nav']}% NAV)",
+        ]
+    lines.append("=> AI CHỈ ĐƯỢC DÙNG ĐÚNG CÁC CON SỐ TRÊN. TUYỆT ĐỐI KHÔNG TỰ TÍNH LẠI HAY SUY DIỄN SỐ KHÁC.")
+    return "\n".join(lines)
 
 # ==========================================
 # 4. KHỞI TẠO BỘ NHỚ TRUNG TÂM
@@ -534,6 +653,12 @@ with st.sidebar:
     if st.button("🔄 CẬP NHẬT DỮ LIỆU"):
         st.cache_data.clear()
         st.rerun()
+
+    st.markdown("---")
+    st.markdown("### QUẢN TRỊ VỐN")
+    nav_input = st.number_input("Tổng vốn (NAV, VNĐ):", min_value=0, value=0, step=10_000_000, format="%d")
+    risk_input = st.slider("Mức rủi ro chấp nhận / lệnh (%):", 0.5, 5.0, 2.0, step=0.5)
+    rr_input = st.slider("Tỷ lệ R:R mục tiêu:", 1.0, 4.0, 2.0, step=0.5)
 
     st.markdown("---")
     st.markdown("### HỒ SƠ SỨC KHỎE CỔ PHIẾU")
@@ -605,6 +730,19 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn..."):
                         else:
                             data_context += f"--- DATASET: {sheet_name} ---\n{df_clean.head(200).to_csv(index=False)}\n\n"
 
+                # --- Tính sẵn Kế hoạch giao dịch bằng Python (không để AI tự suy diễn) ---
+                trade_plan_facts = ""
+                ticker_detect = re.search(r'\b[A-Z]{3}\b', prompt.upper())
+                if ticker_detect:
+                    df_ta_ref = dict_dfs.get("TA_DATA", pd.DataFrame())
+                    plan = calculate_trade_plan(
+                        ticker_detect.group(0),
+                        df_ta_ref,
+                        nav=nav_input if nav_input > 0 else None,
+                        risk_pct=risk_input,
+                        rr_target=rr_input,
+                    )
+                    trade_plan_facts = format_trade_plan_facts(plan)
                 client = genai.Client(api_key=API_KEY)
                 
                 sys_prompt = """
@@ -614,10 +752,10 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn..."):
                 NGUYÊN TẮC HOẠT ĐỘNG:
                 1. ĐỘT BIẾN KHỐI LƯỢNG LÀ TÍN HIỆU CỐT LÕI: Luôn kiểm tra sự đột biến khối lượng (Đột_Biến_KL hoặc dữ liệu Real-time).
                 2. PHÂN TÍCH KỸ THUẬT & ICHIMOKU: Bắt buộc đối chiếu sự đồng thuận của hệ thống Ichimoku từ bảng TA_DATA để củng cố luận điểm.
-                3. QUẢN TRỊ VỐN (POSITION SIZING): NẾU người dùng cung cấp quy mô vốn (NAV) và mức rủi ro, BẮT BUỘC thiết lập hạng mục TỶ TRỌNG ĐI TIỀN. Tính toán rõ số lượng cổ phiếu tối đa được phép mua.
+                3. NGUỒN SỐ LIỆU DUY NHẤT CHO KẾ HOẠCH GIAO DỊCH: Toàn bộ VÙNG MUA, CẮT LỖ, CHỐT LỜI, R:R, KHỐI LƯỢNG được cung cấp sẵn trong khối [SYSTEM_FACTS] ở đầu ngữ cảnh. TUYỆT ĐỐI KHÔNG được tự tính toán lại, làm tròn khác, hay suy diễn con số khác — chỉ được trích dẫn nguyên văn và giải thích ý nghĩa kỹ thuật của chúng. Nếu SYSTEM_FACTS báo "KHÔNG ĐỦ ĐIỀU KIỆN", BẮT BUỘC trả lời rằng chưa đủ cơ sở để giải ngân — được phép đứng ngoài thị trường, không ép quyết đoán khi thiết lập không hợp lệ.
                 4. KẾ HOẠCH GIAO DỊCH: BẮT BUỘC trình bày theo cấu trúc: 
                    - LUẬN ĐIỂM ĐẦU TƯ: Sự hội tụ giữa Dòng tiền, Kỹ thuật và Cơ bản.
-                   - VÙNG MUA (Entry Range): Dựa vào các mức hỗ trợ cứng của Ichimoku.
+                   - VÙNG MUA (Entry Range): Lấy nguyên số liệu từ SYSTEM_FACTS.
                    - ĐIỂM CẮT LỖ CỨNG (Stop-loss): Có giải thích lý do kỹ thuật rõ ràng.
                    - ĐIỂM CHỐT LỜI (Take-profit): Vùng giá mục tiêu kỳ vọng.
                    - TỶ TRỌNG ĐI TIỀN: (Chỉ hiện ra nếu có dữ liệu NAV và Rủi ro).
@@ -627,7 +765,7 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn..."):
                 7. MIỄN TRỪ TRÁCH NHIỆM: Ở cuối câu trả lời luôn chèn: "*Miễn trừ trách nhiệm: Kế hoạch giao dịch trên được tổng hợp từ thuật toán định lượng và dữ liệu thị trường hiện hành, nhà đầu tư tự quản trị rủi ro đối với quyết định giải ngân.*"
                 """
                 
-                full_prompt = f"{sys_prompt}\n\nKHO DỮ LIỆU NỘI BỘ:\n{data_context}\n\nTRUY VẤN: {prompt}"
+                full_prompt = f"{sys_prompt}\n\n{trade_plan_facts}\n\nKHO DỮ LIỆU NỘI BỘ:\n{data_context}\n\nTRUY VẤN: {prompt}"
                 
                 response = client.models.generate_content(
                     model='gemini-3.1-flash-lite', 

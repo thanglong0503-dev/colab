@@ -10,6 +10,7 @@ import base64
 from datetime import datetime
 import matplotlib.pyplot as plt
 import io
+import time
 
 # ==========================================
 # CẤU HÌNH GIAO DIỆN CHÍNH
@@ -21,15 +22,13 @@ st.set_page_config(page_title="LINANCE TERMINAL", page_icon="CORE", layout="cent
 # ==========================================
 def generate_chart_base64(ticker: str, df_ta: pd.DataFrame):
     """Hàm vẽ đồ thị nến Nhật + Khối lượng (2 tầng), CĂNG NGANG."""
-    import yfinance as yf
     try:
-        yf_ticker = f"{ticker}.VN" if not ticker.endswith(".VN") else ticker
-        stock = yf.Ticker(yf_ticker)
-
-        # Lấy 60 ngày để tính MA chuẩn, sau đó cắt lấy 35 nến gần nhất để hiển thị
-        full_hist = stock.history(period="60d")
-        if full_hist.empty:
+        # Dùng chung cache/retry với calculate_trade_plan (period 90d ⊇ 60d cần cho MA20)
+        # để tránh gọi Yahoo Finance thêm lần nữa cho cùng mã trong 90s.
+        full_hist, _ = _fetch_ohlc_with_retry(ticker)
+        if full_hist is None or full_hist.empty:
             return ""
+        full_hist = full_hist.copy()
 
         full_hist['SMA20'] = full_hist['Close'].rolling(window=20).mean()
         full_hist['Vol_SMA20'] = full_hist['Volume'].rolling(window=20).mean()
@@ -611,24 +610,18 @@ def search_internet(query: str) -> str:
 
 
 def get_live_stock_data(ticker: str) -> str:
-    import yfinance as yf
     try:
         ticker = ticker.strip().upper()
-        yf_ticker = f"{ticker}.VN" if not ticker.endswith(".VN") else ticker
-        stock = yf.Ticker(yf_ticker)
+        hist, current_price = _fetch_ohlc_with_retry(ticker)
 
-        current_price = stock.fast_info['lastPrice']
-        if current_price < 1000:
-            current_price *= 1000
+        if hist is None:
+            return f"[SYSTEM CẢNH BÁO] Không thể truy xuất dữ liệu realtime cho {ticker} (giới hạn truy vấn hoặc thiếu dữ liệu). Không suy diễn số liệu thay thế."
 
-        hist = stock.history(period="1mo")
-        if not hist.empty and len(hist) > 0:
-            current_vol = hist['Volume'].iloc[-1]
-            avg_vol_20 = hist['Volume'].mean()
-            surge_ratio = (current_vol / avg_vol_20) * 100 if avg_vol_20 > 0 else 0
-            vol_info = f"Khối lượng phiên nay: {current_vol:,.0f} | KL Trung bình 20 phiên: {avg_vol_20:,.0f} | Mức độ đột biến: {surge_ratio:.1f}%"
-        else:
-            vol_info = "Không trích xuất được dữ liệu khối lượng."
+        vol_20 = hist['Volume'].tail(20)
+        current_vol = float(hist['Volume'].iloc[-1])
+        avg_vol_20 = float(vol_20.mean())
+        surge_ratio = (current_vol / avg_vol_20) * 100 if avg_vol_20 > 0 else 0
+        vol_info = f"Khối lượng phiên nay: {current_vol:,.0f} | KL Trung bình 20 phiên: {avg_vol_20:,.0f} | Mức độ đột biến: {surge_ratio:.1f}%"
 
         return f"[SYSTEM REAL-TIME UPDATE] Mã: {ticker} | Giá: {current_price:,.0f} VNĐ | {vol_info}."
     except Exception as e:
@@ -639,29 +632,54 @@ def draw_technical_chart(ticker: str) -> str:
     return f"[SYSTEM CHART COMMAND TRIGGERED] Hãy xác nhận bằng văn bản rằng đồ thị kỹ thuật mã {ticker} đang được hiển thị ngay bên dưới đoạn hội thoại."
 
 
+@st.cache_data(ttl=90, show_spinner=False)
+def _fetch_ohlc_with_retry(ticker: str, max_retries: int = 3):
+    """
+    Gọi Yahoo Finance có retry/backoff + cache 90s theo ticker (dùng chung
+    cho mọi người dùng trong TTL này, tránh gọi trùng lặp gây rate-limit).
+    Trả về (hist_dataframe, current_price) hoặc (None, None) nếu thất bại hẳn.
+    """
+    import yfinance as yf
+
+    yf_ticker = f"{ticker}.VN" if not ticker.endswith(".VN") else ticker
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            stock = yf.Ticker(yf_ticker)
+            hist = stock.history(period="90d")
+            if hist.empty or len(hist) < 20:
+                return None, None
+
+            try:
+                current_price = float(stock.fast_info['lastPrice'])
+                if current_price < 1000:
+                    current_price *= 1000
+            except Exception:
+                current_price = float(hist['Close'].iloc[-1])
+
+            return hist, current_price
+        except Exception as e:
+            last_err = e
+            # Backoff tăng dần: 0.5s, 1s, 2s — chỉ chờ nếu còn lượt retry
+            if attempt < max_retries - 1:
+                time.sleep(0.5 * (2 ** attempt))
+            continue
+
+    return None, None
+
+
 def calculate_trade_plan(ticker: str, df_ta: pd.DataFrame, nav: float = None,
                           risk_pct: float = None, rr_target: float = 2.0) -> dict:
     """
     TÍNH TOÁN THỰC (deterministic) vùng mua / cắt lỗ / chốt lời / khối lượng.
     AI KHÔNG được tự suy diễn các con số này — chỉ được phép diễn giải kết quả.
     """
-    import yfinance as yf
-
     result = {"valid": False, "reason": "", "ticker": ticker}
     try:
-        yf_ticker = f"{ticker}.VN" if not ticker.endswith(".VN") else ticker
-        stock = yf.Ticker(yf_ticker)
-        hist = stock.history(period="90d")
-        if hist.empty or len(hist) < 20:
-            result["reason"] = "Không đủ dữ liệu giá lịch sử để tính toán."
+        hist, current_price = _fetch_ohlc_with_retry(ticker)
+        if hist is None:
+            result["reason"] = "Hệ thống đang gặp giới hạn truy vấn (Too Many Requests) hoặc không đủ dữ liệu giá lịch sử. Thử lại sau ít phút."
             return result
-
-        try:
-            current_price = float(stock.fast_info['lastPrice'])
-            if current_price < 1000:
-                current_price *= 1000
-        except Exception:
-            current_price = float(hist['Close'].iloc[-1])
 
         # --- ATR(14): đo biến động thực để đặt Stop-loss theo rủi ro thật của từng mã ---
         high_low = hist['High'] - hist['Low']

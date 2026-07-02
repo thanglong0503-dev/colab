@@ -668,114 +668,319 @@ def _fetch_ohlc_with_retry(ticker: str, max_retries: int = 3):
     return None, None
 
 
-def calculate_trade_plan(ticker: str, df_ta: pd.DataFrame, nav: float = None,
-                          risk_pct: float = None, rr_target: float = 2.0) -> dict:
+def calculate_trade_plan(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame,
+                          nav: float = None, risk_pct: float = 2.0,
+                          rr_target: float = 2.0) -> dict:
     """
-    TÍNH TOÁN THỰC (deterministic) vùng mua / cắt lỗ / chốt lời / khối lượng.
-    AI KHÔNG được tự suy diễn các con số này — chỉ được phép diễn giải kết quả.
+    ENGINE TÍNH TOÁN GIAO DỊCH CHUẨN — v2.0
+    ==========================================
+    Nguyên tắc:
+      1. Xác định xu hướng (UPTREND / SIDEWAY / DOWNTREND) trước khi tính bất cứ thứ gì
+      2. Entry = vùng hỗ trợ kỹ thuật thật (Kijun, SMA20, swing low) — KHÔNG được > giá hiện tại
+      3. Stop = dưới vùng hỗ trợ + đệm 0.5 ATR (tránh bị quét bởi noise)
+      4. Stop phải cách Entry tối thiểu 0.8 ATR (không để stop sát quá gây lỗi nhỏ bị stop)
+      5. RR điều chỉnh theo xác suất thắng ước lượng từ Tech_Score + Ichimoku + RS
+      6. Position size: giới hạn cứng ≤ 30% NAV để bảo vệ vốn
     """
     result = {"valid": False, "reason": "", "ticker": ticker}
     try:
+        # ── 1. LẤY DỮ LIỆU GIÁ ──────────────────────────────────────────────
         hist, current_price = _fetch_ohlc_with_retry(ticker)
-        if hist is None:
-            result["reason"] = "Hệ thống đang gặp giới hạn truy vấn (Too Many Requests) hoặc không đủ dữ liệu giá lịch sử. Thử lại sau ít phút."
+        if hist is None or current_price is None:
+            result["reason"] = "Không lấy được dữ liệu giá (giới hạn API hoặc mã không hợp lệ). Thử lại sau ít phút."
             return result
 
-        # --- ATR(14): đo biến động thực để đặt Stop-loss theo rủi ro thật của từng mã ---
-        high_low = hist['High'] - hist['Low']
-        high_close = (hist['High'] - hist['Close'].shift()).abs()
-        low_close = (hist['Low'] - hist['Close'].shift()).abs()
-        true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        atr14 = true_range.rolling(14).mean().iloc[-1]
+        close  = hist['Close']
+        high   = hist['High']
+        low    = hist['Low']
+
+        # ── 2. ATR(14) ───────────────────────────────────────────────────────
+        tr = pd.concat([
+            high - low,
+            (high - close.shift()).abs(),
+            (low  - close.shift()).abs()
+        ], axis=1).max(axis=1)
+        atr14 = tr.rolling(14).mean().iloc[-1]
 
         if pd.isna(atr14) or atr14 <= 0:
-            result["reason"] = "Không tính được ATR (biến động) cho mã này."
+            result["reason"] = "Không tính được ATR(14) — thiếu dữ liệu OHLC."
             return result
 
-        # --- Kijun-sen từ TA_DATA (nếu có) ---
-        kijun_val = None
+        # ── 3. CÁC MỨC KỸ THUẬT TỪ PRICE ACTION ────────────────────────────
+        sma20  = close.rolling(20).mean().iloc[-1]
+        sma50  = close.rolling(50).mean().iloc[-1] if len(close) >= 50 else None
+
+        # Swing low / high (10 và 20 phiên) — dùng làm hỗ trợ/kháng cự thực
+        swing_low_10  = low.tail(10).min()
+        swing_low_20  = low.tail(20).min()
+        swing_high_10 = high.tail(10).max()
+        swing_high_20 = high.tail(20).max()
+
+        # ── 4. DỮ LIỆU ICHIMOKU TỪ TA_DATA ─────────────────────────────────
+        kijun_val    = None
+        tenkan_val   = None
+        senkou_a_val = None
+        senkou_b_val = None
+        cloud_status = ""
+        kumo_signal  = ""
+
         if df_ta is not None and not df_ta.empty and ticker in df_ta['Mã CK'].values:
-            ta_row = df_ta[df_ta['Mã CK'] == ticker].iloc[0].to_dict()
-            try:
-                kijun_val = float(ta_row.get('Kijun_sen', 0)) or None
-            except Exception:
-                pass
+            ta = df_ta[df_ta['Mã CK'] == ticker].iloc[0].to_dict()
+            try: kijun_val    = float(ta.get('Kijun_sen',  0)) or None
+            except Exception: pass
+            try: tenkan_val   = float(ta.get('Tenkan_sen', 0)) or None
+            except Exception: pass
+            try: senkou_a_val = float(ta.get('Senkou_A',   0)) or None
+            except Exception: pass
+            try: senkou_b_val = float(ta.get('Senkou_B',   0)) or None
+            except Exception: pass
+            cloud_status = str(ta.get('Trạng Thái Mây', ''))
+            kumo_signal  = str(ta.get('Tín Hiệu Kumo',  ''))
 
-        # --- VÙNG MUA: quanh giá hiện tại, biên độ theo ATR ---
-        entry_low = current_price - 0.5 * atr14
-        entry_high = current_price + 0.3 * atr14
+        # ── 5. DỮ LIỆU CƠ BẢN + ĐIỂM SỐ TỪ RS_DATA ────────────────────────
+        tech_score = 0
+        rs_1m      = 50
+        if df_rs is not None and not df_rs.empty and ticker in df_rs['Mã CK'].values:
+            rs = df_rs[df_rs['Mã CK'] == ticker].iloc[0].to_dict()
+            try: tech_score = int(rs.get('Tech_Score', 0))
+            except Exception: pass
+            try: rs_1m = float(rs.get('RS_1M', 50))
+            except Exception: pass
 
-        # --- STOP-LOSS: ưu tiên Kijun-sen nếu hợp lý (≤3 ATR dưới giá), nếu không dùng ATR-stop ---
-        atr_based_stop = current_price - 1.5 * atr14
-        if kijun_val and 0 < kijun_val < current_price and (current_price - kijun_val) <= 3 * atr14:
-            stop_loss = min(kijun_val, entry_low) - 0.1 * atr14
-            stop_reason = f"Dưới Kijun-sen ({kijun_val:,.0f}), đệm 0.1 ATR"
+        # ── 6. XÁC ĐỊNH XU HƯỚNG (REGIME) ───────────────────────────────────
+        above_sma20    = current_price > sma20
+        above_sma50    = current_price > sma50 if sma50 else True
+        above_kijun    = current_price > kijun_val if kijun_val else True
+        above_cloud    = "TRÊN Mây" in cloud_status
+        below_cloud    = "DƯỚI Mây" in cloud_status
+        bullish_kumo   = "MUA" in kumo_signal
+
+        # Tính điểm xu hướng (0–5)
+        trend_points = sum([above_sma20, above_sma50, above_kijun, above_cloud, bullish_kumo])
+
+        if trend_points >= 3:
+            regime = "UPTREND"
+        elif trend_points <= 1 and below_cloud:
+            regime = "DOWNTREND"
         else:
-            stop_loss = atr_based_stop
-            stop_reason = "Kijun-sen không hợp lệ/quá xa → dùng Stop theo ATR (1.5x)"
+            regime = "SIDEWAY"
+
+        # DOWNTREND rõ → đứng ngoài (không mua theo downtrend)
+        if regime == "DOWNTREND" and tech_score < -2:
+            result["reason"] = (
+                f"Xu hướng DOWNTREND xác nhận (điểm xu hướng: {trend_points}/5, "
+                f"Tech_Score: {tech_score}). Chưa đủ điều kiện mở vị thế mua — đứng ngoài thị trường."
+            )
+            return result
+
+        # ── 7. XÁC SUẤT THẮNG ƯỚC LƯỢNG → ĐIỀU CHỈNH RR ───────────────────
+        # Win rate ước lượng dựa trên 3 tín hiệu độc lập:
+        # (a) Tech_Score: -8 đến +8  →  normalize về 0–100
+        # (b) Vị trí Ichimoku: TRÊN mây = tốt, DƯỚI mây = xấu
+        # (c) RS_1M: sức mạnh tương đối so với thị trường (percentile 1–100)
+        score_norm   = min(max((tech_score + 8) / 16 * 100, 0), 100)  # 0–100
+        ichimoku_pts = 70 if above_cloud else (40 if not below_cloud else 20)
+        win_rate_est = round((score_norm * 0.4 + ichimoku_pts * 0.35 + rs_1m * 0.25), 1)
+
+        # Ngưỡng chất lượng kèo và RR tương ứng:
+        # Win rate cao (≥65) → kèo chắc, giữ RR thấp hơn (1.5–2.0) để tỷ lệ lệnh thắng cao
+        # Win rate trung bình (50–65) → cần RR ≥ 2.0 để expectancy dương
+        # Win rate thấp (<50) → cần RR ≥ 2.5 để bù rủi ro, hoặc không mở kèo
+        if win_rate_est >= 65:
+            rr_min, rr_cap = 1.5, 3.0
+            quality_label = "CAO"
+        elif win_rate_est >= 50:
+            rr_min, rr_cap = 2.0, 3.5
+            quality_label = "TRUNG BÌNH"
+        else:
+            if regime != "UPTREND":
+                result["reason"] = (
+                    f"Xác suất thắng ước lượng thấp ({win_rate_est:.0f}%) + xu hướng {regime}. "
+                    f"Expectancy âm — không mở kèo."
+                )
+                return result
+            rr_min, rr_cap = 2.5, 4.0
+            quality_label = "THẤP (cần RR cao bù rủi ro)"
+
+        # RR thực dùng: lấy max(user_input, rr_min), giới hạn bởi rr_cap
+        rr_use = round(min(max(rr_target, rr_min), rr_cap), 1)
+
+        # ── 8. VÙNG MUA (ENTRY) — CHỈ ≤ GIÁ HIỆN TẠI ──────────────────────
+        # Ưu tiên theo thứ tự: Kijun-sen → SMA20 → Swing low 10 phiên
+        # Chỉ dùng mức nào ≤ current_price (không bảo người dùng chờ giá tăng lên mới mua)
+        support_candidates = []
+        if kijun_val and 0 < kijun_val <= current_price:
+            support_candidates.append(("Kijun-sen", kijun_val))
+        if sma20 and 0 < sma20 <= current_price:
+            support_candidates.append(("SMA20", sma20))
+        if swing_low_10 and 0 < swing_low_10 <= current_price:
+            support_candidates.append(("Swing Low 10 phiên", swing_low_10))
+        if senkou_b_val and 0 < senkou_b_val <= current_price:
+            support_candidates.append(("Senkou_B", senkou_b_val))
+
+        if support_candidates:
+            # Chọn mức hỗ trợ gần giá nhất (cao nhất trong các ứng viên ≤ giá)
+            support_label, support_level = max(support_candidates, key=lambda x: x[1])
+            entry_low  = round(support_level * 0.999, 0)   # sát dưới hỗ trợ 0.1%
+            entry_high = round(min(support_level * 1.005, current_price), 0)  # max = giá hiện tại
+        else:
+            # Không có hỗ trợ rõ ràng phía dưới → dùng ATR làm fallback, Entry = giá hiện tại
+            support_label  = "ATR fallback (không có hỗ trợ kỹ thuật rõ ràng)"
+            support_level  = current_price
+            entry_low      = round(current_price - 0.3 * atr14, 0)
+            entry_high     = round(current_price, 0)
+
+        # ── 9. STOP-LOSS — DƯỚI HỖ TRỢ + ĐỆM ATR ───────────────────────────
+        # Dùng hỗ trợ sâu hơn (swing_low_20 hoặc Senkou_B) làm đáy stop
+        deeper_support = None
+        if senkou_b_val and 0 < senkou_b_val < support_level:
+            deeper_support = senkou_b_val
+        elif sma50 and 0 < sma50 < support_level:
+            deeper_support = sma50
+        elif swing_low_20 and 0 < swing_low_20 < support_level:
+            deeper_support = swing_low_20
+
+        raw_stop = deeper_support if deeper_support else support_level
+        stop_loss = round(raw_stop - 0.5 * atr14, 0)
+
+        # Đảm bảo khoảng cách Entry→Stop tối thiểu 0.8 ATR (không để stop quá sát)
+        min_stop_distance = 0.8 * atr14
+        if (entry_low - stop_loss) < min_stop_distance:
+            stop_loss = round(entry_low - min_stop_distance, 0)
 
         risk_per_share = entry_low - stop_loss
         if risk_per_share <= 0:
-            result["reason"] = "Thiết lập không hợp lệ: Stop-loss cao hơn/bằng vùng mua."
+            result["reason"] = "Không thể thiết lập Stop-loss hợp lệ (risk/share ≤ 0)."
             return result
 
-        take_profit = entry_low + risk_per_share * rr_target
+        stop_reason = f"Dưới {support_label} ({support_level:,.0f}), đệm 0.5 ATR"
+
+        # ── 10. TAKE-PROFIT — TẠI VÙNG KHÁNG CỰ GẦN NHẤT ──────────────────
+        tp_by_rr = entry_low + risk_per_share * rr_use
+
+        # Tìm vùng kháng cự phía trên (swing high, Senkou_A) để đặt TP thực tế
+        resistance_candidates = []
+        if swing_high_10 > current_price:
+            resistance_candidates.append(swing_high_10)
+        if swing_high_20 > current_price:
+            resistance_candidates.append(swing_high_20)
+        if senkou_a_val and senkou_a_val > current_price:
+            resistance_candidates.append(senkou_a_val)
+
+        if resistance_candidates:
+            nearest_resistance = min(resistance_candidates)
+            # TP = min(RR-based TP, kháng cự gần nhất) — không đặt TP vượt kháng cự cứng
+            take_profit = round(min(tp_by_rr, nearest_resistance * 0.995), 0)
+        else:
+            take_profit = round(tp_by_rr, 0)
+
         actual_rr = round((take_profit - entry_low) / risk_per_share, 2)
 
+        # ── 11. POSITION SIZING — GIỚI HẠN CỨNG ≤ 30% NAV ──────────────────
         result.update({
-            "valid": True,
-            "current_price": round(current_price, 0),
-            "atr14": round(atr14, 0),
-            "entry_low": round(entry_low, 0),
-            "entry_high": round(entry_high, 0),
-            "stop_loss": round(stop_loss, 0),
-            "stop_reason": stop_reason,
-            "take_profit": round(take_profit, 0),
-            "risk_per_share": round(risk_per_share, 0),
-            "rr_ratio": actual_rr,
+            "valid":           True,
+            "ticker":          ticker,
+            "regime":          regime,
+            "trend_points":    trend_points,
+            "win_rate_est":    win_rate_est,
+            "quality_label":   quality_label,
+            "current_price":   round(current_price, 0),
+            "atr14":           round(atr14, 0),
+            "support_label":   support_label,
+            "support_level":   round(support_level, 0),
+            "entry_low":       entry_low,
+            "entry_high":      entry_high,
+            "stop_loss":       stop_loss,
+            "stop_reason":     stop_reason,
+            "take_profit":     take_profit,
+            "risk_per_share":  round(risk_per_share, 0),
+            "rr_ratio":        actual_rr,
+            "rr_used":         rr_use,
         })
 
-        if nav and risk_pct and nav > 0 and risk_pct > 0:
-            risk_amount = nav * (risk_pct / 100)
-            max_shares = int((risk_amount / risk_per_share) // 100) * 100  # làm tròn xuống lô 100 (HOSE)
+        if nav and nav > 0 and risk_pct and risk_pct > 0:
+            risk_amount  = nav * (risk_pct / 100)
+            raw_shares   = risk_amount / risk_per_share
+            max_shares   = int(raw_shares // 100) * 100  # làm tròn xuống lô 100
+
             position_value = max_shares * entry_low
+            position_pct   = (position_value / nav) * 100
+
+            # GIỚI HẠN CỨNG: vị thế không được vượt 30% NAV
+            # (tránh trường hợp risk/share nhỏ → số CP lớn → vị thế khổng lồ)
+            MAX_POSITION_PCT = 30.0
+            if position_pct > MAX_POSITION_PCT:
+                max_shares     = int((nav * MAX_POSITION_PCT / 100 / entry_low) // 100) * 100
+                position_value = max_shares * entry_low
+                position_pct   = (position_value / nav) * 100
+                size_note      = f"Đã giới hạn về {MAX_POSITION_PCT}% NAV (risk/CP nhỏ → khối lượng lý thuyết vượt giới hạn an toàn)"
+            else:
+                size_note = f"Rủi ro tối đa {risk_pct}% NAV = {risk_amount:,.0f} VNĐ"
+
             result.update({
-                "nav": nav, "risk_pct": risk_pct,
-                "risk_amount": round(risk_amount, 0),
-                "max_shares": max_shares,
-                "position_value": round(position_value, 0),
-                "position_pct_of_nav": round((position_value / nav) * 100, 1),
+                "nav":                nav,
+                "risk_pct":           risk_pct,
+                "risk_amount":        round(risk_amount, 0),
+                "max_shares":         max_shares,
+                "position_value":     round(position_value, 0),
+                "position_pct_of_nav": round(position_pct, 1),
+                "size_note":          size_note,
             })
+
         return result
+
     except Exception as e:
-        result["reason"] = f"Lỗi hệ thống khi tính toán: {e}"
+        result["reason"] = f"Lỗi hệ thống: {e}"
         return result
 
 
 def format_trade_plan_facts(plan: dict) -> str:
     if not plan.get("valid"):
-        return (f"[SYSTEM_FACTS - THIẾT LẬP GIAO DỊCH {plan.get('ticker', '')}]\n"
-                f"KHÔNG ĐỦ ĐIỀU KIỆN TÍNH TOÁN: {plan.get('reason')}\n"
-                f"=> AI BẮT BUỘC trả lời rằng CHƯA ĐỦ CƠ SỞ để đưa kế hoạch giao dịch cụ thể "
-                f"(được phép đứng ngoài), TUYỆT ĐỐI không tự bịa vùng mua/stop/TP.\n")
+        return (
+            f"[SYSTEM_FACTS — {plan.get('ticker', '')}]\n"
+            f"KHÔNG ĐỦ ĐIỀU KIỆN MỞ LỆNH: {plan.get('reason')}\n"
+            "=> AI BẮT BUỘC trả lời rằng CHƯA ĐỦ CƠ SỞ để giải ngân. "
+            "TUYỆT ĐỐI không tự bịa vùng mua/stop/TP thay thế.\n"
+        )
 
+    p = plan
     lines = [
-        f"[SYSTEM_FACTS - THIẾT LẬP GIAO DỊCH ĐÃ TÍNH SẴN CHO {plan['ticker']} (dùng ATR14 + Kijun-sen)]",
-        f"Giá hiện tại: {plan['current_price']:,.0f}",
-        f"ATR(14) - biến động trung bình: {plan['atr14']:,.0f}",
-        f"VÙNG MUA (Entry): {plan['entry_low']:,.0f} - {plan['entry_high']:,.0f}",
-        f"CẮT LỖ CỨNG (Stop-loss): {plan['stop_loss']:,.0f}  [Lý do: {plan['stop_reason']}]",
-        f"CHỐT LỜI (Take-profit): {plan['take_profit']:,.0f}",
-        f"Rủi ro/cổ phiếu: {plan['risk_per_share']:,.0f} | Tỷ lệ R:R thực tế: {plan['rr_ratio']}",
+        f"[SYSTEM_FACTS — THIẾT LẬP GIAO DỊCH ĐỊNH LƯỢNG: {p['ticker']}]",
+        f"",
+        f"── XU HƯỚNG & CHẤT LƯỢNG KÈO ──",
+        f"Regime thị trường   : {p['regime']} (điểm xu hướng: {p['trend_points']}/5)",
+        f"Xác suất thắng ước lượng: {p['win_rate_est']:.0f}%  →  Chất lượng kèo: {p['quality_label']}",
+        f"R:R mục tiêu áp dụng: {p['rr_used']} (điều chỉnh theo win rate — KHÔNG dùng R:R khác)",
+        f"",
+        f"── SỐ LIỆU GIAO DỊCH (AI CHỈ ĐƯỢC DÙNG CÁC CON SỐ NÀY) ──",
+        f"Giá hiện tại       : {p['current_price']:,.0f}",
+        f"ATR(14) biến động  : {p['atr14']:,.0f}",
+        f"Vùng hỗ trợ tham chiếu: {p['support_label']} @ {p['support_level']:,.0f}",
+        f"VÙNG MUA (Entry)   : {p['entry_low']:,.0f} — {p['entry_high']:,.0f}",
+        f"CẮT LỖ CỨNG (Stop): {p['stop_loss']:,.0f}  [{p['stop_reason']}]",
+        f"CHỐT LỜI (TP)      : {p['take_profit']:,.0f}",
+        f"Rủi ro / CP        : {p['risk_per_share']:,.0f}  |  R:R thực tế: {p['rr_ratio']}",
     ]
-    if "max_shares" in plan:
+
+    if "max_shares" in p:
         lines += [
-            f"NAV: {plan['nav']:,.0f} | Rủi ro chấp nhận: {plan['risk_pct']}% ({plan['risk_amount']:,.0f} VNĐ)",
-            f"KHỐI LƯỢNG TỐI ĐA ĐƯỢC MUA: {plan['max_shares']:,} CP (đã làm tròn lô 100)",
-            f"Giá trị vị thế: {plan['position_value']:,.0f} VNĐ (~{plan['position_pct_of_nav']}% NAV)",
+            f"",
+            f"── QUẢN TRỊ VỐN ──",
+            f"NAV                : {p['nav']:,.0f} VNĐ",
+            f"Rủi ro / lệnh      : {p['risk_pct']}% = {p['risk_amount']:,.0f} VNĐ",
+            f"Khối lượng mua     : {p['max_shares']:,} CP  (tối đa, lô 100)",
+            f"Giá trị vị thế     : {p['position_value']:,.0f} VNĐ  ({p['position_pct_of_nav']}% NAV)",
+            f"Ghi chú sizing     : {p['size_note']}",
         ]
-    lines.append("=> AI CHỈ ĐƯỢC DÙNG ĐÚNG CÁC CON SỐ TRÊN. TUYỆT ĐỐI KHÔNG TỰ TÍNH LẠI HAY SUY DIỄN SỐ KHÁC.")
+
+    lines += [
+        f"",
+        f"=> AI BẮT BUỘC: trích dẫn NGUYÊN VĂN các số trên, KHÔNG tự tính lại, "
+        f"KHÔNG làm tròn khác. Giải thích Ý NGHĨA KỸ THUẬT của từng mức — tại sao "
+        f"entry nằm ở vùng này, tại sao stop dưới mức này, kháng cự nào giới hạn TP."
+    ]
     return "\n".join(lines)
+
 
 
 # ==========================================
@@ -899,12 +1104,14 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn..."):
 
                 # --- Tính sẵn Kế hoạch giao dịch bằng Python (không để AI tự suy diễn) ---
                 trade_plan_facts = ""
-                ticker_detect = re.search(r'\b[A-Z]{3}\b', prompt.upper())
+                ticker_detect = re.search(r'\b[A-Z]{3,4}\b', prompt.upper())
                 if ticker_detect:
+                    df_rs_ref = dict_dfs.get("RS_DATA", pd.DataFrame())
                     df_ta_ref = dict_dfs.get("TA_DATA", pd.DataFrame())
                     plan = calculate_trade_plan(
                         ticker_detect.group(0),
-                        df_ta_ref,
+                        df_rs=df_rs_ref,
+                        df_ta=df_ta_ref,
                         nav=nav_input if nav_input > 0 else None,
                         risk_pct=risk_input,
                         rr_target=rr_input,

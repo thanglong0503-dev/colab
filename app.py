@@ -396,6 +396,16 @@ def render_trade_plan_card_html(plan: dict) -> str:
     """
 
 
+def _safe_float(val, default=0.0) -> float:
+    """Chuyển string (kể cả 'N/A', số có dấu phẩy) về float an toàn."""
+    try:
+        if val is None or str(val).strip() in ('', 'N/A', 'nan'):
+            return default
+        return float(str(val).replace(',', '.'))
+    except Exception:
+        return default
+
+
 def render_pdf_button(ai_content, ticker_name, dict_dfs, trade_plan=None):
     current_time  = datetime.now().strftime("%d/%m/%Y")
     weekday_map   = {0:"Thứ Hai",1:"Thứ Ba",2:"Thứ Tư",3:"Thứ Năm",4:"Thứ Sáu",5:"Thứ Bảy",6:"Chủ Nhật"}
@@ -828,11 +838,9 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs, trade_plan=None):
             <div style="font-size:11px;color:#1E293B;line-height:1.65;">
               Dữ liệu hệ thống ghi nhận cổ phiếu <b>{ticker_name}</b> đang ở trạng thái
               <b>{cloud}</b> với tín hiệu Kumo <b style="color:#7C3AED;">{kumo}</b>.
-              Tenkan-sen ({tenkan}) {"trên" if tenkan > kijun else "dưới"} Kijun-sen ({kijun})
-              — phản ánh động lượng ngắn hạn
-              {"tích cực" if tenkan > kijun else "đang suy yếu"}.
-              RSI(14) tại {rsi} {"cho thấy đà tăng còn dư địa" if float(rsi.replace(',','.')) < 70 else "tiệm cận vùng quá mua"}.
-              MACD Histogram {macd_h} {"dương — xác nhận xu hướng tăng" if float(macd_h.replace(',','.')) > 0 else "âm — áp lực bán chiếm ưu thế"}.
+              {'Tenkan-sen (' + tenkan + ') ' + ("trên" if _safe_float(tenkan) > _safe_float(kijun) else "dưới") + ' Kijun-sen (' + kijun + ') — phản ánh động lượng ngắn hạn ' + ("tích cực" if _safe_float(tenkan) > _safe_float(kijun) else "đang suy yếu") + '.' if tenkan != 'N/A' and kijun != 'N/A' else ''}
+              {'RSI(14) tại ' + rsi + ' ' + ("cho thấy đà tăng còn dư địa" if _safe_float(rsi) < 70 else "tiệm cận vùng quá mua") + '.' if rsi != 'N/A' else ''}
+              {'MACD Histogram ' + macd_h + ' ' + ("dương — xác nhận xu hướng tăng" if _safe_float(macd_h) > 0 else "âm — áp lực bán chiếm ưu thế") + '.' if macd_h != 'N/A' else ''}
             </div>
           </div>
           <div style="flex:1;">

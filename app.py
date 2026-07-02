@@ -20,97 +20,182 @@ st.set_page_config(page_title="LINANCE TERMINAL", page_icon="CORE", layout="cent
 # ==========================================
 # 1. LÕI KỸ THUẬT: VẼ ĐỒ THỊ NẾN & MÃ HÓA BASE64
 # ==========================================
-def generate_chart_base64(ticker: str, df_ta: pd.DataFrame):
-    """Hàm vẽ đồ thị nến Nhật + Khối lượng (2 tầng), CĂNG NGANG."""
+def generate_chart_base64(ticker: str, df_ta: pd.DataFrame, trade_plan: dict = None):
+    """
+    Biểu đồ nến 40 phiên nâng cấp:
+    - Panel 1 (giá): nến + SMA20 + Ichimoku + vùng Entry/TP/Stop (nếu có trade_plan)
+    - Panel 2 (RSI14): vùng quá mua/bán
+    - Panel 3 (Volume): KL + MA20
+    """
     try:
-        # Dùng chung cache/retry với calculate_trade_plan (period 90d ⊇ 60d cần cho MA20)
-        # để tránh gọi Yahoo Finance thêm lần nữa cho cùng mã trong 90s.
-        full_hist, _ = _fetch_ohlc_with_retry(ticker)
+        full_hist, current_price = _fetch_ohlc_with_retry(ticker)
         if full_hist is None or full_hist.empty:
             return ""
         full_hist = full_hist.copy()
 
-        full_hist['SMA20'] = full_hist['Close'].rolling(window=20).mean()
-        full_hist['Vol_SMA20'] = full_hist['Volume'].rolling(window=20).mean()
+        # --- Tính các chỉ báo ---
+        full_hist['SMA20'] = full_hist['Close'].rolling(20).mean()
+        full_hist['Vol_SMA20'] = full_hist['Volume'].rolling(20).mean()
 
-        hist = full_hist.tail(35)
+        # ATR20 — dùng 20 phiên cho giao dịch ngắn-trung hạn (chuẩn hơn ATR14 cho swing)
+        tr = pd.concat([
+            full_hist['High'] - full_hist['Low'],
+            (full_hist['High'] - full_hist['Close'].shift()).abs(),
+            (full_hist['Low']  - full_hist['Close'].shift()).abs()
+        ], axis=1).max(axis=1)
+        full_hist['ATR20'] = tr.rolling(20).mean()
 
-        tenkan_val, kijun_val = None, None
+        # RSI14
+        delta = full_hist['Close'].diff()
+        gain  = delta.clip(lower=0).rolling(14).mean()
+        loss  = (-delta.clip(upper=0)).rolling(14).mean()
+        rs    = gain / loss.replace(0, 1e-10)
+        full_hist['RSI14'] = 100 - 100 / (1 + rs)
+
+        hist = full_hist.tail(40).copy()
+        hist = hist.reset_index()
+        n = len(hist)
+
+        # --- Ichimoku từ TA_DATA ---
+        tenkan_val = kijun_val = None
         if df_ta is not None and not df_ta.empty and ticker in df_ta['Mã CK'].values:
-            ta_data = df_ta[df_ta['Mã CK'] == ticker].iloc[0].to_dict()
-            tenkan_val = float(ta_data.get('Tenkan_sen', 0))
-            kijun_val = float(ta_data.get('Kijun_sen', 0))
+            ta = df_ta[df_ta['Mã CK'] == ticker].iloc[0].to_dict()
+            try: tenkan_val = float(ta.get('Tenkan_sen', 0)) or None
+            except Exception: pass
+            try: kijun_val  = float(ta.get('Kijun_sen',  0)) or None
+            except Exception: pass
 
-        # Tăng figsize, chia 2 trục: Trục giá (ax1) và Trục Volume (ax2)
+        # --- Entry/Stop/TP từ trade_plan (nếu có) ---
+        entry_low = stop_loss = take_profit = entry_high = None
+        if trade_plan and trade_plan.get('valid'):
+            entry_low  = trade_plan.get('entry_low')
+            entry_high = trade_plan.get('entry_high')
+            stop_loss  = trade_plan.get('stop_loss')
+            take_profit= trade_plan.get('take_profit')
+
+        # --- Layout ---
         plt.style.use('dark_background')
-        fig, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(12, 6.5), dpi=200)
-        fig.patch.set_facecolor('#0B0F17')
-        ax1.set_facecolor('#0B0F17')
-        ax2.set_facecolor('#0B0F17')
+        fig, (ax1, ax_rsi, ax2) = plt.subplots(
+            3, 1,
+            gridspec_kw={'height_ratios': [4, 1.2, 1], 'hspace': 0.04},
+            figsize=(14, 8), dpi=180
+        )
+        BG = '#0B0F17'
+        for ax in (ax1, ax_rsi, ax2):
+            ax.set_facecolor(BG)
+        fig.patch.set_facecolor(BG)
 
-        x_indices = range(len(hist))
+        x = range(n)
 
-        # Vẽ nến và Volume
-        for i in x_indices:
+        # ── Panel 1: GIÁ ──────────────────────────────────────────────────
+        cp = float(hist['Close'].iloc[-1])
+
+        # Vùng TP (xanh lá nhạt)
+        if take_profit and entry_low:
+            tp_pct = (take_profit - entry_low) / entry_low * 100
+            ax1.axhspan(entry_low, take_profit, alpha=0.08, color='#10B981', zorder=0)
+            ax1.axhline(y=take_profit, color='#10B981', linewidth=1.4, linestyle='--', alpha=0.9,
+                        label=f'Chốt lời: {take_profit:,.0f}  (+{tp_pct:.1f}%)')
+
+        # Vùng Stop (đỏ nhạt)
+        if stop_loss and entry_low:
+            sl_pct = (stop_loss - entry_low) / entry_low * 100
+            ax1.axhspan(stop_loss, entry_low, alpha=0.08, color='#EF4444', zorder=0)
+            ax1.axhline(y=stop_loss, color='#EF4444', linewidth=1.4, linestyle='--', alpha=0.9,
+                        label=f'Cắt lỗ: {stop_loss:,.0f}  ({sl_pct:.1f}%)')
+
+        # Vùng Entry (xanh dương nhạt)
+        if entry_low and entry_high:
+            ax1.axhspan(entry_low, entry_high, alpha=0.18, color='#0078D4', zorder=1)
+            ax1.axhline(y=entry_low,  color='#0078D4', linewidth=1.2, linestyle='-', alpha=0.7)
+            ax1.axhline(y=entry_high, color='#0078D4', linewidth=1.2, linestyle='-', alpha=0.7,
+                        label=f'Vùng mua: {entry_low:,.0f}–{entry_high:,.0f}')
+
+        # Nến
+        for i in x:
             row = hist.iloc[i]
             color = '#10B981' if row['Close'] >= row['Open'] else '#EF4444'
+            ax1.plot([i, i], [row['Low'], row['High']], color=color, linewidth=1.2, zorder=2)
+            b_bot = min(row['Open'], row['Close'])
+            b_top = max(row['Open'], row['Close'])
+            ax1.add_patch(plt.Rectangle((i - 0.38, b_bot), 0.76,
+                          max(b_top - b_bot, cp * 0.0005),
+                          facecolor=color, edgecolor=color, zorder=2))
 
-            # Ax1: Nến giá
-            ax1.plot([i, i], [row['Low'], row['High']], color=color, linewidth=1.5)
-            body_bottom = min(row['Open'], row['Close'])
-            body_top = max(row['Open'], row['Close'])
-            body_height = max(body_top - body_bottom, 0.001)
-            ax1.add_patch(plt.Rectangle((i - 0.4, body_bottom), 0.8, body_height, facecolor=color, edgecolor=color))
-
-            # Ax2: Khối lượng
-            ax2.add_patch(plt.Rectangle((i - 0.4, 0), 0.8, row['Volume'], facecolor=color, alpha=0.8))
-
-        # Ax1: Vẽ các đường chỉ báo kỹ thuật
-        current_price = hist['Close'].iloc[-1]
-        ax1.axhline(y=current_price, color='#0A84FF', linestyle='-', linewidth=1.5, alpha=0.8, label=f'Giá hiện tại: {current_price:,.0f}')
-        ax1.plot(x_indices, hist['SMA20'], color='#A855F7', linewidth=1.5, label='SMA 20 (Xu hướng giá)')
-
+        # SMA20 + Ichimoku
+        ax1.plot(x, hist['SMA20'], color='#A855F7', linewidth=1.4, label='SMA20', zorder=3)
+        ax1.axhline(y=cp, color='#0A84FF', linewidth=1.6, alpha=0.9,
+                    label=f'Giá: {cp:,.0f}', zorder=3)
         if tenkan_val and tenkan_val > 0:
-            ax1.axhline(y=tenkan_val, color='#F59E0B', linestyle='--', linewidth=1.2, alpha=0.8, label=f'Tenkan-sen: {tenkan_val:,.0f}')
+            ax1.axhline(y=tenkan_val, color='#F59E0B', linewidth=1.1, linestyle='--', alpha=0.85,
+                        label=f'Tenkan: {tenkan_val:,.0f}')
         if kijun_val and kijun_val > 0:
-            ax1.axhline(y=kijun_val, color='#EF4444', linestyle='-.', linewidth=1.2, alpha=0.8, label=f'Kijun-sen (Cắt lỗ): {kijun_val:,.0f}')
+            ax1.axhline(y=kijun_val, color='#FB7185', linewidth=1.1, linestyle='-.', alpha=0.85,
+                        label=f'Kijun: {kijun_val:,.0f}')
 
-        # Ax2: Vẽ đường trung bình khối lượng
-        ax2.plot(x_indices, hist['Vol_SMA20'], color='#F8FAFC', linestyle='--', linewidth=1.5, label='Trung bình KL (20 Phiên)')
+        ax1.set_title(f'PHÂN TÍCH KỸ THUẬT — {ticker}  |  40 PHIÊN  |  ATR20: {hist["ATR20"].iloc[-1]:,.0f}',
+                      color='white', fontsize=11, fontweight='bold', pad=10)
+        ax1.legend(loc='upper left', fontsize=8, facecolor='#1C2635',
+                   edgecolor='#334155', framealpha=0.9, ncol=2)
+        ax1.tick_params(axis='y', colors='#94A3B8', labelsize=8)
+        ax1.set_xticks([])
+        ax1.grid(True, color='white', alpha=0.04)
+        for sp in ['top','right','bottom']: ax1.spines[sp].set_visible(False)
+        ax1.spines['left'].set_color('#334155')
 
-        # Tinh chỉnh Ax1 (Giá)
-        ax1.set_title(f"BIỂU ĐỒ HÀNH VI GIÁ VÀ DÒNG TIỀN (35 PHIÊN) - {ticker}", color='white', pad=15, fontsize=13, fontweight='bold', fontfamily='sans-serif')
-        ax1.legend(loc='upper left', fontsize=9, facecolor='#1C2635', edgecolor='none')
-        ax1.grid(True, color='white', alpha=0.05)
-        ax1.set_xticks([])  # Ẩn trục X của ax1 để nhường cho ax2
-        ax1.tick_params(axis='y', colors='#94A3B8', labelsize=9)
-        ax1.spines['top'].set_visible(False)
-        ax1.spines['right'].set_visible(False)
-        ax1.spines['left'].set_color('#333333')
-        ax1.spines['bottom'].set_visible(False)
+        # ── Panel 2: RSI ──────────────────────────────────────────────────
+        ax_rsi.plot(x, hist['RSI14'], color='#F59E0B', linewidth=1.2, label='RSI(14)')
+        ax_rsi.axhline(70, color='#EF4444', linewidth=0.8, linestyle='--', alpha=0.6)
+        ax_rsi.axhline(30, color='#10B981', linewidth=0.8, linestyle='--', alpha=0.6)
+        ax_rsi.axhspan(70, 100, alpha=0.04, color='#EF4444')
+        ax_rsi.axhspan(0,  30,  alpha=0.04, color='#10B981')
+        ax_rsi.fill_between(x, hist['RSI14'], 50,
+                             where=(hist['RSI14'] >= 50), alpha=0.1, color='#10B981')
+        ax_rsi.fill_between(x, hist['RSI14'], 50,
+                             where=(hist['RSI14'] <  50), alpha=0.1, color='#EF4444')
+        ax_rsi.set_ylim(0, 100)
+        ax_rsi.set_yticks([30, 50, 70])
+        ax_rsi.tick_params(axis='y', colors='#94A3B8', labelsize=7)
+        ax_rsi.set_xticks([])
+        ax_rsi.set_ylabel('RSI', color='#94A3B8', fontsize=7)
+        ax_rsi.grid(True, color='white', alpha=0.03)
+        ax_rsi.legend(loc='upper left', fontsize=7, facecolor='#1C2635',
+                      edgecolor='none', framealpha=0.8)
+        for sp in ['top','right','bottom']: ax_rsi.spines[sp].set_visible(False)
+        ax_rsi.spines['left'].set_color('#334155')
 
-        # Tinh chỉnh Ax2 (Volume)
-        ax2.legend(loc='upper left', fontsize=9, facecolor='#1C2635', edgecolor='none')
-        ax2.grid(True, color='white', alpha=0.05)
-        ax2.set_xticks(x_indices[::3])
-        ax2.set_xticklabels([hist.index[i].strftime('%d/%m') for i in x_indices[::3]], rotation=0, color='#94A3B8', fontsize=9)
-        ax2.tick_params(axis='y', colors='#94A3B8', labelsize=9)
-        # Ẩn nhãn trục Y của Volume cho gọn
+        # ── Panel 3: VOLUME ───────────────────────────────────────────────
+        for i in x:
+            row = hist.iloc[i]
+            color = '#10B981' if row['Close'] >= row['Open'] else '#EF4444'
+            ax2.add_patch(plt.Rectangle((i - 0.38, 0), 0.76, row['Volume'],
+                          facecolor=color, alpha=0.75))
+        ax2.plot(x, hist['Vol_SMA20'], color='white', linewidth=1.2,
+                 linestyle='--', label='KL TB20', alpha=0.7)
+        step = max(1, n // 10)
+        ax2.set_xticks(list(x)[::step])
+        ax2.set_xticklabels(
+            [hist['Date'].iloc[i].strftime('%d/%m') if hasattr(hist['Date'].iloc[i], 'strftime')
+             else str(hist.index[i]) for i in list(x)[::step]],
+            rotation=0, color='#94A3B8', fontsize=8
+        )
+        ax2.tick_params(axis='y', colors='#94A3B8', labelsize=7)
         ax2.set_yticklabels([])
-        ax2.spines['top'].set_visible(False)
-        ax2.spines['right'].set_visible(False)
-        ax2.spines['left'].set_color('#333333')
-        ax2.spines['bottom'].set_color('#333333')
+        ax2.legend(loc='upper left', fontsize=7, facecolor='#1C2635', edgecolor='none')
+        ax2.grid(True, color='white', alpha=0.03)
+        for sp in ['top','right']: ax2.spines[sp].set_visible(False)
+        ax2.spines['left'].set_color('#334155')
+        ax2.spines['bottom'].set_color('#334155')
 
-        plt.tight_layout()
+        plt.tight_layout(pad=0.5)
         buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight')
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=180)
         plt.close(fig)
         buf.seek(0)
-        img_b64 = base64.b64encode(buf.read()).decode('utf-8')
-        return f"data:image/png;base64,{img_b64}"
-    except Exception:
+        return f"data:image/png;base64,{base64.b64encode(buf.read()).decode('utf-8')}"
+    except Exception as e:
         return ""
+
 
 
 # ==========================================
@@ -897,74 +982,99 @@ def calculate_trade_plan(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame,
         # RR thực dùng: lấy max(user_input, rr_min), giới hạn bởi rr_cap
         rr_use = round(min(max(rr_target, rr_min), rr_cap), 1)
 
-        # ── 8. VÙNG MUA (ENTRY) — CHỈ ≤ GIÁ HIỆN TẠI ──────────────────────
-        # Ưu tiên theo thứ tự: Kijun-sen → SMA20 → Swing low 10 phiên
-        # Chỉ dùng mức nào ≤ current_price (không bảo người dùng chờ giá tăng lên mới mua)
+        # ── 8. ATR20 — CHUẨN HƠN CHO SWING TRADING ─────────────────────────
+        # Quỹ định lượng dùng ATR20 cho swing (2–3 tuần), ATR14 cho day-trade
+        # Ở đây mục tiêu giao dịch ngắn-trung hạn → ATR20
+        atr20 = tr.rolling(20).mean().iloc[-1]
+        atr_use = atr20 if (not pd.isna(atr20) and atr20 > 0) else atr14
+
+        # ── 9. ENTRY — TẠI VÙNG HỖ TRỢ GẦN NHẤT ≤ GIÁ HIỆN TẠI ───────────
+        # Ưu tiên: Kijun-sen → SMA20 → Tenkan-sen → Swing Low 10 phiên
+        # Chỉ dùng mức nào ≤ current_price
         support_candidates = []
         if kijun_val and 0 < kijun_val <= current_price:
             support_candidates.append(("Kijun-sen", kijun_val))
         if sma20 and 0 < sma20 <= current_price:
             support_candidates.append(("SMA20", sma20))
+        if tenkan_val and 0 < tenkan_val <= current_price:
+            support_candidates.append(("Tenkan-sen", tenkan_val))
         if swing_low_10 and 0 < swing_low_10 <= current_price:
             support_candidates.append(("Swing Low 10 phiên", swing_low_10))
-        if senkou_b_val and 0 < senkou_b_val <= current_price:
-            support_candidates.append(("Senkou_B", senkou_b_val))
 
         if support_candidates:
-            # Chọn mức hỗ trợ gần giá nhất (cao nhất trong các ứng viên ≤ giá)
             support_label, support_level = max(support_candidates, key=lambda x: x[1])
-            entry_low  = round(support_level * 0.999, 0)   # sát dưới hỗ trợ 0.1%
-            entry_high = round(min(support_level * 1.005, current_price), 0)  # max = giá hiện tại
         else:
-            # Không có hỗ trợ rõ ràng phía dưới → dùng ATR làm fallback, Entry = giá hiện tại
-            support_label  = "ATR fallback (không có hỗ trợ kỹ thuật rõ ràng)"
+            support_label  = "Giá hiện tại (không có hỗ trợ rõ)"
             support_level  = current_price
-            entry_low      = round(current_price - 0.3 * atr14, 0)
-            entry_high     = round(current_price, 0)
 
-        # ── 9. STOP-LOSS — DƯỚI HỖ TRỢ + ĐỆM ATR ───────────────────────────
-        # Dùng hỗ trợ sâu hơn (swing_low_20 hoặc Senkou_B) làm đáy stop
-        deeper_support = None
-        if senkou_b_val and 0 < senkou_b_val < support_level:
-            deeper_support = senkou_b_val
-        elif sma50 and 0 < sma50 < support_level:
-            deeper_support = sma50
-        elif swing_low_20 and 0 < swing_low_20 < support_level:
-            deeper_support = swing_low_20
+        # Entry zone: sát vùng hỗ trợ ±0.5% — giá phải ≤ current_price
+        entry_low  = round(max(support_level * 0.995, support_level - 0.5 * atr_use), 0)
+        entry_high = round(min(support_level * 1.005, current_price), 0)
+        # Đảm bảo entry_low < entry_high
+        if entry_low >= entry_high:
+            entry_low = round(entry_high - 0.3 * atr_use, 0)
 
-        raw_stop = deeper_support if deeper_support else support_level
-        stop_loss = round(raw_stop - 0.5 * atr14, 0)
-
-        # Đảm bảo khoảng cách Entry→Stop tối thiểu 0.8 ATR (không để stop quá sát)
-        min_stop_distance = 0.8 * atr14
-        if (entry_low - stop_loss) < min_stop_distance:
-            stop_loss = round(entry_low - min_stop_distance, 0)
+        # ── 10. STOP-LOSS — NGUYÊN TẮC CỐT LÕI ─────────────────────────────
+        # RULE: Stop = Entry_low - N×ATR  (N phụ thuộc chất lượng hỗ trợ)
+        # N = 1.0 ATR nếu hỗ trợ là Kijun/SMA20 (hỗ trợ mạnh)
+        # N = 1.5 ATR nếu hỗ trợ yếu hơn (swing low, fallback)
+        # → Stop luôn cách Entry một khoảng cố định theo biến động thực tế
+        # → KHÔNG dùng đáy lịch sử xa làm stop (tránh stop quá rộng)
+        strong_supports = {"Kijun-sen", "SMA20", "Tenkan-sen"}
+        n_atr_stop = 1.0 if support_label in strong_supports else 1.5
+        stop_loss = round(entry_low - n_atr_stop * atr_use, 0)
+        stop_reason = f"Entry ({entry_low:,.0f}) − {n_atr_stop}×ATR20 ({atr_use:,.0f}) | Hỗ trợ: {support_label}"
 
         risk_per_share = entry_low - stop_loss
         if risk_per_share <= 0:
-            result["reason"] = "Không thể thiết lập Stop-loss hợp lệ (risk/share ≤ 0)."
+            result["reason"] = "Không thiết lập được Stop hợp lệ."
             return result
 
-        stop_reason = f"Dưới {support_label} ({support_level:,.0f}), đệm 0.5 ATR"
+        # ── 11. TAKE-PROFIT — TỪ RR × RISK, KIỂM TRA KHÁNG CỰ SAU ─────────
+        # RULE: TP = Entry + RR × Risk  TRƯỚC → sau đó kiểm tra có vượt kháng cự không
+        # Nếu TP bị kháng cự chặn VÀ R:R thực < rr_min → điều chỉnh xuống rr_min
+        # (không cắt TP dưới mức tối thiểu chỉ vì kháng cự — kháng cự có thể bị phá)
+        tp_primary = entry_low + risk_per_share * rr_use
 
-        # ── 10. TAKE-PROFIT — TẠI VÙNG KHÁNG CỰ GẦN NHẤT ──────────────────
-        tp_by_rr = entry_low + risk_per_share * rr_use
-
-        # Tìm vùng kháng cự phía trên (swing high, Senkou_A) để đặt TP thực tế
+        # Tìm kháng cự phía trên giá hiện tại
         resistance_candidates = []
-        if swing_high_10 > current_price:
-            resistance_candidates.append(swing_high_10)
-        if swing_high_20 > current_price:
-            resistance_candidates.append(swing_high_20)
-        if senkou_a_val and senkou_a_val > current_price:
-            resistance_candidates.append(senkou_a_val)
+        if swing_high_10 > current_price * 1.001:
+            resistance_candidates.append(("Swing High 10", swing_high_10))
+        if swing_high_20 > current_price * 1.001:
+            resistance_candidates.append(("Swing High 20", swing_high_20))
+        if senkou_a_val and senkou_a_val > current_price * 1.001:
+            resistance_candidates.append(("Senkou_A", senkou_a_val))
 
         if resistance_candidates:
-            nearest_resistance = min(resistance_candidates)
-            # TP = min(RR-based TP, kháng cự gần nhất) — không đặt TP vượt kháng cự cứng
-            take_profit = round(min(tp_by_rr, nearest_resistance * 0.995), 0)
+            nearest_res_label, nearest_res = min(resistance_candidates, key=lambda x: x[1])
+            if nearest_res < tp_primary:
+                # Kháng cự nằm giữa Entry và TP lý thuyết
+                rr_at_resistance = (nearest_res - entry_low) / risk_per_share
+                if rr_at_resistance >= rr_min:
+                    # Kháng cự đủ xa → đặt TP sát dưới kháng cự
+                    take_profit = round(nearest_res * 0.995, 0)
+                    tp_note = f"Giới hạn bởi {nearest_res_label} ({nearest_res:,.0f})"
+                else:
+                    # Kháng cự quá gần, R:R bị ép xuống dưới tối thiểu
+                    # → giữ nguyên TP theo RR (kháng cự có thể bị phá nếu xu hướng mạnh)
+                    take_profit = round(tp_primary, 0)
+                    tp_note = f"Kháng cự {nearest_res_label} ({nearest_res:,.0f}) quá gần — giữ TP theo R:R"
+            else:
+                take_profit = round(tp_primary, 0)
+                tp_note = f"Không có kháng cự cứng trước TP"
         else:
-            take_profit = round(tp_by_rr, 0)
+            take_profit = round(tp_primary, 0)
+            tp_note = "Không xác định được kháng cự rõ ràng"
+
+        actual_rr = round((take_profit - entry_low) / risk_per_share, 2)
+
+        # Kiểm tra cuối: R:R thực tế phải ≥ 1.0 (điều kiện cơ bản nhất)
+        if actual_rr < 1.0:
+            result["reason"] = (
+                f"R:R thực tế ({actual_rr}) < 1.0 — thiết lập không đủ hấp dẫn. "
+                f"Giá đang quá gần kháng cự hoặc quá xa hỗ trợ. Chờ pullback sâu hơn."
+            )
+            return result
 
         actual_rr = round((take_profit - entry_low) / risk_per_share, 2)
 

@@ -397,13 +397,578 @@ def render_trade_plan_card_html(plan: dict) -> str:
 
 
 def render_pdf_button(ai_content, ticker_name, dict_dfs, trade_plan=None):
-    current_time = datetime.now().strftime("%d/%m/%Y")
+    current_time  = datetime.now().strftime("%d/%m/%Y")
+    weekday_map   = {0:"Thứ Hai",1:"Thứ Ba",2:"Thứ Tư",3:"Thứ Năm",4:"Thứ Sáu",5:"Thứ Bảy",6:"Chủ Nhật"}
+    today         = datetime.now()
+    date_full     = f"{weekday_map[today.weekday()]}, {today.day} Tháng {today.month} {today.year}"
+    report_code   = f"LC-{ticker_name}-{today.strftime('%Y%m%d')}"
 
-    html_content = ai_content
-    html_content = re.sub(r'### (.*?)\n', r'<h3 style="color:#0078D4; font-size: 16px; margin-top: 25px; margin-bottom: 10px; border-bottom: 1px dashed #ddd; padding-bottom: 5px;">\1</h3>', html_content)
-    html_content = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', html_content)
-    html_content = re.sub(r'\*(.*?)\*', r'<i>\1</i>', html_content)
-    html_content = html_content.replace('\n', '<br>')
+    # ── Convert markdown AI content ─────────────────────────────────────────
+    def md2html(text):
+        text = re.sub(r'### (.*?)(\n|$)', r'<p style="font-size:13px;font-weight:700;color:#1a1a2e;margin:12px 0 4px;text-transform:uppercase;letter-spacing:0.3px;">\1</p>', text)
+        text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+        text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
+        text = re.sub(r'- (.*?)(\n|$)', r'<li style="margin:3px 0;">\1</li>', text)
+        text = text.replace('\n', '<br>')
+        return text
+
+    html_content = md2html(ai_content)
+
+    # ── Lấy dữ liệu ─────────────────────────────────────────────────────────
+    df_rs = dict_dfs.get("RS_DATA", pd.DataFrame()) if dict_dfs else pd.DataFrame()
+    df_ta = dict_dfs.get("TA_DATA", pd.DataFrame()) if dict_dfs else pd.DataFrame()
+
+    stock_rs = df_rs[df_rs['Mã CK'] == ticker_name].iloc[0].to_dict() \
+               if not df_rs.empty and ticker_name in df_rs['Mã CK'].values else {}
+    stock_ta = df_ta[df_ta['Mã CK'] == ticker_name].iloc[0].to_dict() \
+               if not df_ta.empty and ticker_name in df_ta['Mã CK'].values else {}
+
+    industry = stock_rs.get('Ngành', 'N/A')
+
+    def fnum(val, dec=2, pct=False, vol=False):
+        try:
+            if val == '' or val is None: return 'N/A'
+            v = float(val)
+            if pd.isna(v): return 'N/A'
+            if vol: return f"{v:,.0f}"
+            s = f"{v:,.{dec}f}"
+            return f"{s}%" if pct else s
+        except Exception:
+            return str(val)
+
+    gia_ht   = fnum(stock_rs.get('Giá','N/A'), 0)
+    pe       = fnum(stock_rs.get('P/E','N/A'))
+    pb       = fnum(stock_rs.get('P/B','N/A'))
+    roe      = fnum(stock_rs.get('ROE (%)','N/A'), pct=True)
+    debt     = fnum(stock_rs.get('Nợ/Vốn Chủ','N/A'))
+    rs_1m    = fnum(stock_rs.get('RS_1M','N/A'), 0)
+    rs_3m    = fnum(stock_rs.get('RS_3M','N/A'), 0)
+    mfi      = fnum(stock_rs.get('MFI_14','N/A'))
+    rsi      = fnum(stock_rs.get('RSI_14','N/A'))
+    kl_tb    = fnum(stock_rs.get('KL_TB_20','N/A'), vol=True)
+    dot_bien = fnum(stock_rs.get('Đột_Biến_KL','N/A'))
+    macd_h   = fnum(stock_rs.get('MACD_Hist','N/A'), dec=3)
+    cloud    = str(stock_ta.get('Trạng Thái Mây','N/A'))
+    kumo     = str(stock_ta.get('Tín Hiệu Kumo','N/A'))
+    tenkan   = fnum(stock_ta.get('Tenkan_sen','N/A'), 0)
+    kijun    = fnum(stock_ta.get('Kijun_sen','N/A'), 0)
+    senkou_a = fnum(stock_ta.get('Senkou_A','N/A'), 0)
+    senkou_b = fnum(stock_ta.get('Senkou_B','N/A'), 0)
+    tscore   = int(stock_rs.get('Tech_Score', 0)) if stock_rs else 0
+
+    # Khuyến nghị & màu
+    if trade_plan and trade_plan.get('valid'):
+        regime = trade_plan.get('regime','')
+        win_rt = trade_plan.get('win_rate_est', 0)
+        if regime == 'UPTREND' and win_rt >= 60:
+            rec_text, rec_bg, rec_fg = 'MUA', '#059669', 'white'
+        elif regime == 'UPTREND':
+            rec_text, rec_bg, rec_fg = 'TÍCH LŨY', '#0078D4', 'white'
+        elif regime == 'DOWNTREND':
+            rec_text, rec_bg, rec_fg = 'KHÔNG MUA', '#DC2626', 'white'
+        else:
+            rec_text, rec_bg, rec_fg = 'QUAN SÁT', '#F59E0B', 'white'
+
+        entry_low  = trade_plan.get('entry_low', 0)
+        entry_high = trade_plan.get('entry_high', 0)
+        stop_val   = trade_plan.get('stop_loss', 0)
+        tp_val     = trade_plan.get('take_profit', 0)
+        rr_val     = trade_plan.get('rr_ratio', 0)
+        support_lv = trade_plan.get('support_level', 0)
+
+        try:
+            cp_num = float(stock_rs.get('Giá', 0)) or entry_low
+            upside_pct = f"{(tp_val - cp_num)/cp_num*100:+.1f}%" if cp_num > 0 else 'N/A'
+            downside_pct = f"{(stop_val - cp_num)/cp_num*100:.1f}%" if cp_num > 0 else 'N/A'
+        except Exception:
+            upside_pct = downside_pct = 'N/A'
+
+        # Bảng hỗ trợ/kháng cự
+        try:
+            sen_a_f = float(stock_ta.get('Senkou_A', 0))
+            sen_b_f = float(stock_ta.get('Senkou_B', 0))
+            htro1  = fnum(max(float(stock_ta.get('Kijun_sen',0)), float(stock_ta.get('Tenkan_sen',0))), 0)
+            htro2  = fnum(min(sen_a_f, sen_b_f), 0)
+            khangcu1 = fnum(max(sen_a_f, sen_b_f), 0)
+            khangcu2 = fnum(tp_val * 1.05, 0)
+        except Exception:
+            htro1 = htro2 = khangcu1 = khangcu2 = 'N/A'
+
+        trading_table_html = f"""
+        <table style="width:100%;border-collapse:collapse;font-size:12px;text-align:center;margin-top:10px;">
+          <tr style="background:#1a1a2e;color:white;font-weight:700;">
+            <td style="padding:8px 4px;">KN (1)</td>
+            <td style="padding:8px 4px;">KN (2)</td>
+            <td style="padding:8px 4px;">Hỗ trợ (1)</td>
+            <td style="padding:8px 4px;">Hỗ trợ (2)</td>
+            <td style="padding:8px 4px;">Kháng cự (1)</td>
+            <td style="padding:8px 4px;">Kháng cự (2)</td>
+            <td style="padding:8px 4px;background:#DC2626;">Cắt lỗ</td>
+            <td style="padding:8px 4px;background:#059669;">Mục tiêu</td>
+          </tr>
+          <tr style="background:#F8FAFC;font-weight:700;font-size:13px;">
+            <td style="padding:10px 4px;color:#0078D4;">~{fnum(entry_low,0)}</td>
+            <td style="padding:10px 4px;color:#0078D4;">~{fnum(entry_high,0)}</td>
+            <td style="padding:10px 4px;">~{htro1}</td>
+            <td style="padding:10px 4px;">~{htro2}</td>
+            <td style="padding:10px 4px;">~{khangcu1}</td>
+            <td style="padding:10px 4px;">~{khangcu2}</td>
+            <td style="padding:10px 4px;color:#DC2626;">&lt;{fnum(stop_val,0)}</td>
+            <td style="padding:10px 4px;color:#059669;">~{fnum(tp_val,0)}</td>
+          </tr>
+        </table>
+        """
+    else:
+        rec_text, rec_bg, rec_fg = 'QUAN SÁT', '#64748B', 'white'
+        entry_low = entry_high = stop_val = tp_val = rr_val = support_lv = 0
+        upside_pct = downside_pct = 'N/A'
+        trading_table_html = '<p style="color:#94A3B8;font-size:12px;">Chưa đủ dữ liệu để thiết lập bảng giao dịch.</p>'
+
+    # ── Chart (truyền trade_plan để vẽ vùng Entry/Stop/TP) ──────────────────
+    chart_b64 = generate_chart_base64(ticker_name, df_ta, trade_plan)
+
+    # ── Peer comparison ──────────────────────────────────────────────────────
+    peer_rows_html = ""
+    if industry and not df_rs.empty:
+        peers = df_rs[(df_rs['Ngành']==industry)&(df_rs['Mã CK']!=ticker_name)]\
+                .sort_values('RS_1M',ascending=False).head(4)
+        for _, row in peers.iterrows():
+            peer_rows_html += f"""
+            <tr style="border-bottom:1px solid #E2E8F0;font-size:11px;">
+                <td style="padding:5px 8px;font-weight:600;">{row.get('Mã CK','')}</td>
+                <td style="text-align:right;padding:5px 8px;">{fnum(row.get('P/E',''))}</td>
+                <td style="text-align:right;padding:5px 8px;">{fnum(row.get('P/B',''))}</td>
+                <td style="text-align:right;padding:5px 8px;">{fnum(row.get('ROE (%)',''),pct=True)}</td>
+                <td style="text-align:right;padding:5px 8px;">{fnum(row.get('RS_1M',''),0)}</td>
+                <td style="text-align:right;padding:5px 8px;">{str(row.get('Trạng Thái',''))}</td>
+            </tr>"""
+
+    peer_table = f"""
+    <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:8px;">
+      <tr style="background:#F1F5F9;font-weight:700;font-size:11px;">
+        <td style="padding:5px 8px;">Mã CK</td>
+        <td style="text-align:right;padding:5px 8px;">P/E</td>
+        <td style="text-align:right;padding:5px 8px;">P/B</td>
+        <td style="text-align:right;padding:5px 8px;">ROE</td>
+        <td style="text-align:right;padding:5px 8px;">RS 1M</td>
+        <td style="text-align:right;padding:5px 8px;">Trạng thái</td>
+      </tr>
+      <tr style="background:#EFF6FF;font-weight:700;font-size:11px;border-bottom:2px solid #0078D4;">
+        <td style="padding:5px 8px;color:#0078D4;">{ticker_name}</td>
+        <td style="text-align:right;padding:5px 8px;">{pe}</td>
+        <td style="text-align:right;padding:5px 8px;">{pb}</td>
+        <td style="text-align:right;padding:5px 8px;">{roe}</td>
+        <td style="text-align:right;padding:5px 8px;">{rs_1m}</td>
+        <td style="text-align:right;padding:5px 8px;">{cloud}</td>
+      </tr>
+      {peer_rows_html}
+    </table>
+    """ if peer_rows_html else ""
+
+    # ── CSS chung ────────────────────────────────────────────────────────────
+    css = """
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body, div { font-family: 'Be Vietnam Pro', 'Roboto', sans-serif; }
+      .page { width: 210mm; min-height: 297mm; background: white; position: relative; overflow: hidden; }
+      .page-break { page-break-before: always; break-before: always; }
+      .avoid-break { page-break-inside: avoid; break-inside: avoid; }
+      .header-bar { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                    padding: 14px 28px; display: flex; justify-content: space-between; align-items: center; }
+      .footer-bar { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                    color: #94A3B8; font-size: 9px; padding: 8px 28px;
+                    display: flex; justify-content: space-between; align-items: center; }
+      .accent { color: #7C3AED; }
+      .section-title { font-size: 11px; font-weight: 700; color: #1a1a2e;
+                       text-transform: uppercase; letter-spacing: 0.8px;
+                       border-left: 3px solid #7C3AED; padding-left: 8px; margin-bottom: 10px; }
+      .card { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 14px; }
+      .badge-buy  { background:#059669; color:white; font-weight:800; font-size:22px;
+                    padding: 8px 24px; border-radius:6px; display:inline-block; letter-spacing:1px; }
+      .badge-watch{ background:#F59E0B; color:white; font-weight:800; font-size:22px;
+                    padding: 8px 24px; border-radius:6px; display:inline-block; }
+      .badge-sell { background:#DC2626; color:white; font-weight:800; font-size:22px;
+                    padding: 8px 24px; border-radius:6px; display:inline-block; }
+      .kpi-box { text-align:center; padding: 8px 4px; }
+      .kpi-label { font-size:9px; color:#64748B; text-transform:uppercase; letter-spacing:0.5px; font-weight:600; }
+      .kpi-val   { font-size:15px; font-weight:800; color:#1a1a2e; margin-top:2px; }
+      td, th { vertical-align: middle; }
+    </style>
+    """
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # TRANG 1: KHUYẾN NGHỊ + CHỈ SỐ TÀI CHÍNH + LUẬN ĐIỂM
+    # ══════════════════════════════════════════════════════════════════════════
+    page1 = f"""
+    <div class="page">
+      <!-- HEADER -->
+      <div class="header-bar">
+        <div>
+          <div style="color:#94A3B8;font-size:9px;letter-spacing:1px;text-transform:uppercase;">
+            LINANCE RESEARCH — BÁO CÁO PHÂN TÍCH KỸ THUẬT ĐỊNH LƯỢNG
+          </div>
+          <div style="color:white;font-size:13px;font-weight:800;margin-top:2px;">
+            LINANCE<span class="accent">.CORE</span>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <div style="color:white;font-size:16px;font-weight:800;">TECHNICAL REPORT</div>
+          <div style="color:#94A3B8;font-size:10px;margin-top:2px;">{date_full}</div>
+        </div>
+      </div>
+
+      <!-- SUBHEADER: Tên công ty -->
+      <div style="padding:10px 28px;border-bottom:3px solid #7C3AED;background:#FAFAFA;">
+        <div style="font-size:11px;color:#64748B;">Mã cổ phiếu: <b style="color:#1a1a2e;">{ticker_name}</b>
+          &nbsp;|&nbsp; Ngành: <b style="color:#1a1a2e;">{industry}</b>
+          &nbsp;|&nbsp; Mã báo cáo: <span style="color:#7C3AED;">{report_code}</span>
+        </div>
+      </div>
+
+      <!-- BODY TRANG 1 -->
+      <div style="padding:16px 28px;display:flex;gap:20px;">
+
+        <!-- CỘT TRÁI: Khuyến nghị + Chỉ số -->
+        <div style="flex:0 0 220px;">
+
+          <!-- Box Khuyến nghị -->
+          <div class="card avoid-break" style="margin-bottom:12px;text-align:center;">
+            <div class="kpi-label" style="margin-bottom:6px;">KHUYẾN NGHỊ</div>
+            <div class="{('badge-buy' if rec_text in ('MUA','TÍCH LŨY') else ('badge-sell' if rec_text=='KHÔNG MUA' else 'badge-watch'))}">{rec_text}</div>
+            <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+              <div class="kpi-box" style="border-right:1px solid #E2E8F0;">
+                <div class="kpi-label">Giá hiện tại</div>
+                <div class="kpi-val" style="font-size:13px;">{gia_ht}</div>
+              </div>
+              <div class="kpi-box">
+                <div class="kpi-label">Mục tiêu</div>
+                <div class="kpi-val" style="font-size:13px;color:#059669;">{fnum(tp_val,0) if tp_val else 'N/A'}</div>
+              </div>
+              <div class="kpi-box" style="border-right:1px solid #E2E8F0;">
+                <div class="kpi-label">Upside</div>
+                <div class="kpi-val" style="font-size:13px;color:#059669;">{upside_pct}</div>
+              </div>
+              <div class="kpi-box">
+                <div class="kpi-label">Cắt lỗ</div>
+                <div class="kpi-val" style="font-size:13px;color:#DC2626;">{fnum(stop_val,0) if stop_val else 'N/A'}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Chỉ số tài chính -->
+          <div class="avoid-break" style="margin-bottom:12px;">
+            <div class="section-title">Chỉ Số Tài Chính</div>
+            <table style="width:100%;font-size:11px;border-collapse:collapse;">
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">P/E</td>
+                <td style="text-align:right;font-weight:700;">{pe}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">P/B</td>
+                <td style="text-align:right;font-weight:700;">{pb}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">ROE</td>
+                <td style="text-align:right;font-weight:700;">{roe}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">Nợ / Vốn chủ</td>
+                <td style="text-align:right;font-weight:700;">{debt}</td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- Chỉ báo kỹ thuật -->
+          <div class="avoid-break" style="margin-bottom:12px;">
+            <div class="section-title">Chỉ Báo Kỹ Thuật</div>
+            <table style="width:100%;font-size:11px;border-collapse:collapse;">
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">RSI(14)</td>
+                <td style="text-align:right;font-weight:700;">{rsi}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">MFI(14)</td>
+                <td style="text-align:right;font-weight:700;">{mfi}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">MACD Hist</td>
+                <td style="text-align:right;font-weight:700;">{macd_h}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">RS 1 tháng</td>
+                <td style="text-align:right;font-weight:700;">{rs_1m}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">RS 3 tháng</td>
+                <td style="text-align:right;font-weight:700;">{rs_3m}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">KL TB 20 phiên</td>
+                <td style="text-align:right;font-weight:700;">{kl_tb}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">Đột biến KL</td>
+                <td style="text-align:right;font-weight:700;">{dot_bien}%</td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- Ichimoku snapshot -->
+          <div class="avoid-break">
+            <div class="section-title">Ichimoku Kinko Hyo</div>
+            <table style="width:100%;font-size:11px;border-collapse:collapse;">
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">Tenkan-sen</td>
+                <td style="text-align:right;font-weight:700;">{tenkan}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">Kijun-sen</td>
+                <td style="text-align:right;font-weight:700;">{kijun}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">Senkou A</td>
+                <td style="text-align:right;font-weight:700;">{senkou_a}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">Senkou B</td>
+                <td style="text-align:right;font-weight:700;">{senkou_b}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #F1F5F9;">
+                <td style="padding:5px 0;color:#64748B;">Trạng thái mây</td>
+                <td style="text-align:right;font-weight:700;font-size:10px;">{cloud}</td>
+              </tr>
+              <tr>
+                <td style="padding:5px 0;color:#64748B;">Tín hiệu Kumo</td>
+                <td style="text-align:right;font-weight:700;color:#7C3AED;">{kumo}</td>
+              </tr>
+            </table>
+          </div>
+        </div>
+
+        <!-- CỘT PHẢI: Luận điểm AI -->
+        <div style="flex:1;min-width:0;">
+          <div class="section-title">Luận Điểm Đầu Tư &amp; Kế Hoạch Giao Dịch</div>
+          <div style="font-size:12px;line-height:1.7;color:#1E293B;text-align:justify;">
+            {html_content}
+          </div>
+
+          <!-- So sánh ngành -->
+          {f'<div class="avoid-break" style="margin-top:16px;"><div class="section-title">So Sánh Cùng Ngành ({industry})</div>{peer_table}</div>' if peer_table else ''}
+        </div>
+      </div>
+
+      <!-- FOOTER -->
+      <div class="footer-bar" style="position:absolute;bottom:0;left:0;right:0;">
+        <div>LINANCE Research &nbsp;|&nbsp; Nguyễn Đào Thăng Long — Quantitative Analyst</div>
+        <div>{report_code}</div>
+      </div>
+    </div>
+    """
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # TRANG 2: CHART KỸ THUẬT + BẢNG HỖ TRỢ/KHÁNG CỰ
+    # ══════════════════════════════════════════════════════════════════════════
+    chart_img_html = f'<img src="{chart_b64}" style="width:100%;border-radius:6px;display:block;">' \
+                     if chart_b64 else '<div style="color:#94A3B8;text-align:center;padding:40px;">Không tải được biểu đồ</div>'
+
+    page2 = f"""
+    <div class="page page-break">
+      <!-- HEADER -->
+      <div class="header-bar">
+        <div>
+          <div style="color:#94A3B8;font-size:9px;letter-spacing:1px;text-transform:uppercase;">
+            LINANCE RESEARCH — PHÂN TÍCH KỸ THUẬT
+          </div>
+          <div style="color:white;font-size:13px;font-weight:800;margin-top:2px;">
+            LINANCE<span class="accent">.CORE</span>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <div style="color:white;font-size:16px;font-weight:800;">TECHNICAL REPORT</div>
+          <div style="color:#94A3B8;font-size:10px;margin-top:2px;">{date_full}</div>
+        </div>
+      </div>
+
+      <div style="padding:6px 28px 2px;border-bottom:2px solid #7C3AED;background:#FAFAFA;">
+        <div style="font-size:11px;color:#64748B;">
+          Mã: <b style="color:#1a1a2e;">{ticker_name}</b> &nbsp;|&nbsp; {industry}
+          &nbsp;|&nbsp; <span style="color:#7C3AED;">{report_code}</span>
+        </div>
+      </div>
+
+      <div style="padding:12px 28px;">
+        <!-- Bảng hỗ trợ/kháng cự/cắt lỗ/mục tiêu -->
+        <div class="section-title" style="margin-bottom:8px;">Vùng Giao Dịch Tham Chiếu</div>
+        {trading_table_html}
+
+        <!-- Chart -->
+        <div style="margin-top:12px;">
+          <div class="section-title" style="margin-bottom:6px;">
+            Phân Tích Kỹ Thuật — {ticker_name} (40 Phiên) | RSI(14) | Vùng Entry/SL/TP
+          </div>
+          {chart_img_html}
+        </div>
+
+        <!-- Chú thích chart -->
+        <div style="margin-top:8px;font-size:9px;color:#64748B;display:flex;gap:16px;flex-wrap:wrap;">
+          <span><span style="color:#0078D4;font-weight:700;">━</span> Vùng Mua</span>
+          <span><span style="color:#DC2626;font-weight:700;">- -</span> Cắt lỗ</span>
+          <span><span style="color:#059669;font-weight:700;">- -</span> Mục tiêu</span>
+          <span><span style="color:#A855F7;font-weight:700;">━</span> SMA20</span>
+          <span><span style="color:#F59E0B;font-weight:700;">- -</span> Tenkan-sen</span>
+          <span><span style="color:#FB7185;font-weight:700;">-·-</span> Kijun-sen</span>
+          <span><span style="color:#F59E0B;font-weight:700;">━</span> RSI(14)</span>
+        </div>
+
+        <!-- Phân tích kỹ thuật brief -->
+        <div class="avoid-break" style="margin-top:14px;display:flex;gap:16px;">
+          <div style="flex:1;">
+            <div class="section-title">Phân Tích Kỹ Thuật</div>
+            <div style="font-size:11px;color:#1E293B;line-height:1.65;">
+              Dữ liệu hệ thống ghi nhận cổ phiếu <b>{ticker_name}</b> đang ở trạng thái
+              <b>{cloud}</b> với tín hiệu Kumo <b style="color:#7C3AED;">{kumo}</b>.
+              Tenkan-sen ({tenkan}) {"trên" if tenkan > kijun else "dưới"} Kijun-sen ({kijun})
+              — phản ánh động lượng ngắn hạn
+              {"tích cực" if tenkan > kijun else "đang suy yếu"}.
+              RSI(14) tại {rsi} {"cho thấy đà tăng còn dư địa" if float(rsi.replace(',','.')) < 70 else "tiệm cận vùng quá mua"}.
+              MACD Histogram {macd_h} {"dương — xác nhận xu hướng tăng" if float(macd_h.replace(',','.')) > 0 else "âm — áp lực bán chiếm ưu thế"}.
+            </div>
+          </div>
+          <div style="flex:1;">
+            <div class="section-title">Chiến Lược Giao Dịch</div>
+            <div style="font-size:11px;color:#1E293B;line-height:1.65;">
+              <b>Vùng mua:</b> {fnum(entry_low,0)} — {fnum(entry_high,0)}<br>
+              <b>Cắt lỗ cứng:</b> {fnum(stop_val,0)} ({downside_pct} từ entry)<br>
+              <b>Mục tiêu:</b> {fnum(tp_val,0)} ({upside_pct} từ entry)<br>
+              <b>Tỷ lệ R:R:</b> {rr_val} : 1<br>
+              <b>Hỗ trợ tham chiếu:</b> {trade_plan.get('support_label','—') if trade_plan else '—'}<br>
+              <b>Điều kiện vào lệnh:</b> Giá pullback về vùng mua, khối lượng
+              {"duy trì trên mức TB 20 phiên" if dot_bien != 'N/A' else "cần theo dõi"}.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-bar" style="position:absolute;bottom:0;left:0;right:0;">
+        <div>LINANCE Research &nbsp;|&nbsp; Dữ liệu: HOSE/HNX &nbsp;|&nbsp; Nguồn tính toán: LINANCE Quantitative Engine</div>
+        <div>{report_code} — Trang 2/3</div>
+      </div>
+    </div>
+    """
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # TRANG 3: DISCLAIMER + THÔNG TIN TỔ CHỨC
+    # ══════════════════════════════════════════════════════════════════════════
+    page3 = f"""
+    <div class="page page-break">
+      <div class="header-bar">
+        <div>
+          <div style="color:white;font-size:13px;font-weight:800;">LINANCE<span class="accent">.CORE</span></div>
+          <div style="color:#94A3B8;font-size:9px;margin-top:2px;">LINANCE RESEARCH</div>
+        </div>
+        <div style="text-align:right;">
+          <div style="color:white;font-size:16px;font-weight:800;">TECHNICAL REPORT</div>
+          <div style="color:#94A3B8;font-size:10px;margin-top:2px;">{date_full}</div>
+        </div>
+      </div>
+
+      <div style="padding:28px 40px;font-size:11px;color:#1E293B;line-height:1.75;">
+
+        <div style="margin-bottom:20px;">
+          <div class="section-title" style="font-size:12px;">Tổ Chức Thực Hiện Báo Cáo</div>
+          <p style="margin-top:8px;">
+            <b>LINANCE Research</b> là bộ phận phân tích định lượng thuộc Trung tâm Phân tích Định lượng LINANCE.
+            Hệ thống sử dụng mô hình thuật toán kết hợp phân tích kỹ thuật, phân tích tương đối
+            (Relative Strength) và Ichimoku Kinko Hyo để đánh giá cổ phiếu trên thị trường chứng khoán Việt Nam (HOSE, HNX, UPCoM).
+          </p>
+        </div>
+
+        <div style="margin-bottom:20px;">
+          <div class="section-title" style="font-size:12px;">Nhân Viên Phân Tích</div>
+          <p style="margin-top:8px;">
+            <b>Nguyễn Đào Thăng Long</b><br>
+            Chuyên viên Phân tích Định lượng (Quantitative Analyst)<br>
+            Trung tâm Phân tích Định lượng LINANCE
+          </p>
+        </div>
+
+        <div style="margin-bottom:20px;">
+          <div class="section-title" style="font-size:12px;">Khuyến Cáo Quan Trọng</div>
+          <p style="margin-top:8px;font-style:italic;color:#475569;">
+            Báo cáo này chỉ nhằm cung cấp thông tin phục vụ mục đích tham khảo và không cấu thành lời khuyên đầu tư
+            hay lời mời chào mua hoặc bán bất kỳ chứng khoán nào. Các nhận định, đánh giá trong báo cáo phản ánh
+            kết quả tính toán của mô hình định lượng tại thời điểm phát hành và có thể thay đổi mà không cần thông báo trước.
+          </p>
+          <p style="margin-top:8px;font-style:italic;color:#475569;">
+            Nhà đầu tư cần tự thực hiện nghiên cứu độc lập và/hoặc tham khảo ý kiến chuyên gia tài chính được cấp phép
+            trước khi đưa ra quyết định đầu tư. LINANCE Research không chịu trách nhiệm đối với bất kỳ tổn thất nào
+            phát sinh từ việc sử dụng thông tin trong báo cáo này.
+          </p>
+          <p style="margin-top:8px;font-style:italic;color:#475569;">
+            Thông tin sử dụng trong báo cáo được thu thập từ các nguồn được coi là đáng tin cậy (HOSE, HNX, Yahoo Finance,
+            vnstock). Tuy nhiên, LINANCE Research không đảm bảo tính chính xác tuyệt đối của dữ liệu.
+            Báo cáo này là tài sản của LINANCE Research. Không được phép sao chép, phát hành hoặc tái phân phối
+            khi chưa có sự chấp thuận bằng văn bản.
+          </p>
+        </div>
+
+        <div style="border-top:1px solid #E2E8F0;padding-top:16px;color:#64748B;font-size:10px;">
+          <b>Mã báo cáo:</b> {report_code} &nbsp;|&nbsp;
+          <b>Ngày phát hành:</b> {current_time} &nbsp;|&nbsp;
+          <b>Phiên bản:</b> LINANCE Quantitative Engine v2.0
+        </div>
+      </div>
+
+      <div class="footer-bar" style="position:absolute;bottom:0;left:0;right:0;">
+        <div>LINANCE RESEARCH — PHÒNG PHÂN TÍCH ĐỊNH LƯỢNG</div>
+        <div>{report_code} — Trang 3/3</div>
+      </div>
+    </div>
+    """
+
+    # ── Ghép 3 trang ─────────────────────────────────────────────────────────
+    raw_report_html = css + page1 + page2 + page3
+
+    b64_html  = base64.b64encode(raw_report_html.encode('utf-8')).decode('utf-8')
+    file_name = f"LINANCE_{ticker_name}_{today.strftime('%d%m%Y_%H%M')}.pdf"
+
+    button_code = f"""
+    <body style="margin:0;padding:0;overflow:hidden;background:transparent;">
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+      <style>
+        .pdf-btn{{background:transparent;color:#10B981;border:1px solid rgba(16,185,129,0.5);
+                  border-radius:6px;padding:6px 12px;font-family:'JetBrains Mono',monospace;
+                  font-size:11px;font-weight:bold;cursor:pointer;transition:all 0.3s;
+                  display:inline-flex;align-items:center;}}
+        .pdf-btn:hover{{background:#10B981;color:#fff;box-shadow:0 0 10px rgba(16,185,129,0.4);}}
+      </style>
+      <button class="pdf-btn" id="dlPdfBtn" onclick="exportPDF()">EXPORT PDF</button>
+      <script>
+      function exportPDF(){{
+        document.getElementById("dlPdfBtn").innerText="⏳ GENERATING...";
+        const b=window.atob('{b64_html}');
+        const a=new Uint8Array(b.length);
+        for(let i=0;i<b.length;i++) a[i]=b.charCodeAt(i);
+        const html=new TextDecoder('utf-8').decode(a);
+        const d=document.createElement('div');
+        d.innerHTML=html;
+        html2pdf().set({{
+          margin:[0,0,0,0],
+          filename:'{file_name}',
+          image:{{type:'jpeg',quality:0.98}},
+          html2canvas:{{scale:2,useCORS:true,logging:false}},
+          jsPDF:{{unit:'mm',format:'a4',orientation:'portrait'}},
+          pagebreak:{{mode:['css','legacy']}}
+        }}).from(d).save().then(()=>{{
+          document.getElementById("dlPdfBtn").innerText="✅ DOWNLOADED!";
+          setTimeout(()=>document.getElementById("dlPdfBtn").innerText="EXPORT PDF",3000);
+        }});
+      }}
+      </script>
+    </body>
+    """
+    return button_code
 
     df_rs = dict_dfs.get("RS_DATA", pd.DataFrame()) if dict_dfs else pd.DataFrame()
     df_ta = dict_dfs.get("TA_DATA", pd.DataFrame()) if dict_dfs else pd.DataFrame()

@@ -193,37 +193,120 @@ def render_trade_plan_card_html(plan: dict) -> str:
         return ""
     if not plan.get("valid"):
         return f"""
-        <div class="avoid-break" style="margin: 20px 0; padding: 18px; background: #FEF2F2; border: 1px solid #FCA5A5; border-radius: 10px;">
-            <div style="font-weight:700; color:#B91C1C; font-size:14px;">⚠ CHƯA ĐỦ ĐIỀU KIỆN THIẾT LẬP GIAO DỊCH</div>
-            <div style="font-size:12px; color:#7F1D1D; margin-top:5px;">{plan.get('reason', '')}</div>
+        <div class="avoid-break" style="margin:16px 0; padding:16px 20px; background:#FEF2F2;
+             border-left:4px solid #EF4444; border-radius:6px;">
+            <div style="font-weight:700; color:#B91C1C; font-size:13px; text-transform:uppercase; letter-spacing:0.5px;">
+                CHƯA ĐỦ ĐIỀU KIỆN MỞ LỆNH
+            </div>
+            <div style="font-size:12px; color:#7F1D1D; margin-top:6px; line-height:1.5;">
+                {plan.get('reason', '')}
+            </div>
         </div>
         """
 
-    rr = plan['rr_ratio']
-    rr_color = "#10B981" if rr >= 2 else ("#F59E0B" if rr >= 1.2 else "#EF4444")
-    position_html = ""
-    if "max_shares" in plan:
-        position_html = f"""
-        <tr style="border-top:1px solid #E2E8F0;">
-            <td style="padding:8px 0; color:#475569;">Khối lượng tối đa</td>
-            <td style="text-align:right; font-weight:700;">{plan['max_shares']:,} CP</td>
+    p = plan
+    rr = p['rr_ratio']
+    rr_color  = "#059669" if rr >= 2.5 else ("#0078D4" if rr >= 1.5 else "#DC2626")
+    win_color = "#059669" if p.get('win_rate_est', 0) >= 65 else ("#F59E0B" if p.get('win_rate_est', 0) >= 50 else "#DC2626")
+    regime    = p.get('regime', '')
+    regime_color = "#059669" if regime == "UPTREND" else ("#F59E0B" if regime == "SIDEWAY" else "#DC2626")
+
+    position_rows = ""
+    if "max_shares" in p:
+        position_rows = f"""
+        <tr style="border-top:2px solid #E2E8F0;">
+            <td colspan="2" style="padding:10px 0 4px; font-size:11px; text-transform:uppercase;
+                letter-spacing:0.8px; color:#94A3B8; font-weight:700;">Quản trị vốn</td>
         </tr>
         <tr>
-            <td style="padding:8px 0; color:#475569;">Giá trị vị thế / % NAV</td>
-            <td style="text-align:right; font-weight:700;">{plan['position_value']:,.0f} ({plan['position_pct_of_nav']}%)</td>
+            <td style="padding:5px 0; color:#475569; font-size:13px;">Khối lượng mua (tối đa)</td>
+            <td style="text-align:right; font-weight:700; font-size:13px;">{p['max_shares']:,} CP</td>
+        </tr>
+        <tr>
+            <td style="padding:5px 0; color:#475569; font-size:13px;">Giá trị vị thế</td>
+            <td style="text-align:right; font-weight:700; font-size:13px;">
+                {p['position_value']:,.0f} <span style="color:#94A3B8; font-weight:400;">({p['position_pct_of_nav']}% NAV)</span>
+            </td>
         </tr>
         """
 
     return f"""
-    <div class="avoid-break" style="margin: 20px 0; padding: 20px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px;">
-        <div style="font-size:15px; font-weight:900; color:#0078D4; margin-bottom:12px;">THIẾT LẬP GIAO DỊCH ĐỊNH LƯỢNG (ATR14 + Ichimoku)</div>
-        {render_price_range_svg(plan)}
-        <table style="width:100%; font-size:13px; border-collapse:collapse; margin-top:10px;">
-            <tr><td style="padding:8px 0; color:#475569;">ATR(14) - Biến động</td><td style="text-align:right; font-weight:700;">{plan['atr14']:,.0f}</td></tr>
-            <tr style="border-top:1px solid #E2E8F0;"><td style="padding:8px 0; color:#475569;">Rủi ro / cổ phiếu</td><td style="text-align:right; font-weight:700;">{plan['risk_per_share']:,.0f}</td></tr>
-            <tr style="border-top:1px solid #E2E8F0;"><td style="padding:8px 0; color:#475569;">Tỷ lệ R:R</td><td style="text-align:right; font-weight:900; color:{rr_color};">{rr} : 1</td></tr>
-            {position_html}
-        </table>
+    <div class="avoid-break" style="margin:16px 0; border:1px solid #E2E8F0; border-radius:10px; overflow:hidden;">
+
+        <!-- Header card -->
+        <div style="background:#0F172A; padding:12px 18px; display:flex; justify-content:space-between; align-items:center;">
+            <div style="color:white; font-weight:800; font-size:13px; letter-spacing:0.5px;">
+                THIẾT LẬP GIAO DỊCH ĐỊNH LƯỢNG
+            </div>
+            <div style="display:flex; gap:12px; align-items:center;">
+                <span style="color:{regime_color}; font-size:11px; font-weight:700; background:rgba(255,255,255,0.08);
+                    padding:3px 8px; border-radius:4px;">{regime}</span>
+                <span style="color:{win_color}; font-size:11px; font-weight:700;">
+                    XS THẮNG: {p.get('win_rate_est', 0):.0f}%
+                </span>
+            </div>
+        </div>
+
+        <!-- 3 ô Entry / Stop / TP -->
+        <div style="display:flex; border-bottom:1px solid #E2E8F0;">
+            <div style="flex:1; padding:14px 16px; border-right:1px solid #E2E8F0; text-align:center;">
+                <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.8px;
+                    color:#64748B; font-weight:700; margin-bottom:6px;">Vùng Mua</div>
+                <div style="font-size:15px; font-weight:900; color:#0078D4;">
+                    {p['entry_low']:,.0f}
+                </div>
+                <div style="font-size:11px; color:#94A3B8; margin-top:2px;">
+                    — {p['entry_high']:,.0f}
+                </div>
+                <div style="font-size:10px; color:#94A3B8; margin-top:4px;">
+                    Hỗ trợ: {p.get('support_label','—')}
+                </div>
+            </div>
+            <div style="flex:1; padding:14px 16px; border-right:1px solid #E2E8F0; text-align:center;">
+                <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.8px;
+                    color:#64748B; font-weight:700; margin-bottom:6px;">Cắt Lỗ</div>
+                <div style="font-size:15px; font-weight:900; color:#DC2626;">
+                    {p['stop_loss']:,.0f}
+                </div>
+                <div style="font-size:10px; color:#94A3B8; margin-top:6px; line-height:1.4;">
+                    {p.get('stop_reason','—')}
+                </div>
+            </div>
+            <div style="flex:1; padding:14px 16px; text-align:center;">
+                <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.8px;
+                    color:#64748B; font-weight:700; margin-bottom:6px;">Chốt Lời</div>
+                <div style="font-size:15px; font-weight:900; color:#059669;">
+                    {p['take_profit']:,.0f}
+                </div>
+                <div style="font-size:11px; font-weight:700; margin-top:4px; color:{rr_color};">
+                    R:R = {rr} : 1
+                </div>
+            </div>
+        </div>
+
+        <!-- Thanh SVG price range -->
+        <div style="padding:12px 18px 4px; background:#F8FAFC;">
+            {render_price_range_svg(p)}
+        </div>
+
+        <!-- Bảng chi tiết -->
+        <div style="padding:4px 18px 16px; background:#F8FAFC;">
+            <table style="width:100%; font-size:13px; border-collapse:collapse;">
+                <tr>
+                    <td style="padding:5px 0; color:#475569;">Rủi ro / cổ phiếu</td>
+                    <td style="text-align:right; font-weight:700;">{p['risk_per_share']:,.0f}</td>
+                </tr>
+                <tr>
+                    <td style="padding:5px 0; color:#475569;">Biên độ biến động ATR(14)</td>
+                    <td style="text-align:right; font-weight:700;">{p['atr14']:,.0f}
+                        <span style="color:#94A3B8; font-size:11px; font-weight:400;">
+                            (dao động trung bình 14 phiên)
+                        </span>
+                    </td>
+                </tr>
+                {position_rows}
+            </table>
+        </div>
     </div>
     """
 
@@ -318,7 +401,16 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs, trade_plan=None):
             """
 
     chart_base64 = generate_chart_base64(ticker_name, df_ta)
-    chart_html = f'<div class="avoid-break" style="margin-top: 40px; text-align: center; position: relative; z-index: 2;"><img src="{chart_base64}" style="width: 100%; border: 1px solid #E2E8F0; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"></div>' if chart_base64 else ""
+    chart_html = f"""
+    <div style="page-break-before: always; padding: 30px 40px 20px 40px; background:white;">
+        <div style="font-size:13px; font-weight:700; color:#0078D4; text-transform:uppercase;
+             letter-spacing:1px; margin-bottom:12px; border-bottom:2px solid #0078D4; padding-bottom:6px;">
+            BIỂU ĐỒ GIÁ &amp; KHỐI LƯỢNG — {ticker_name} (35 PHIÊN GẦN NHẤT)
+        </div>
+        <img src="{chart_base64}" style="width:95%; display:block; margin:0 auto;
+             border:1px solid #E2E8F0; border-radius:8px;">
+    </div>
+    """ if chart_base64 else ""
 
     svg_watermark = "<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400'><text x='50%' y='50%' font-size='40' fill='%230078D4' fill-opacity='0.03' font-family='Arial' font-weight='bold' text-anchor='middle' transform='rotate(-45 200 200)'>LINANCE.CORE</text></svg>"
     b64_watermark = base64.b64encode(svg_watermark.encode('utf-8')).decode('utf-8')
@@ -1121,24 +1213,44 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn..."):
                 client = genai.Client(api_key=API_KEY)
 
                 sys_prompt = """
-                Bạn là Bậc thầy Phân tích Định lượng và Cố vấn Giao dịch cấp tổ chức tại LINANCE Terminal.
-                MỤC TIÊU CỐT LÕI: Đưa ra Kế hoạch Giao dịch (Actionable Trading Plan) quyết đoán. Tuyệt đối không nhận định nước đôi.
+Bạn là Chuyên viên Phân tích Định lượng cấp cao (Senior Quantitative Analyst) tại LINANCE Research.
+Nhiệm vụ: Soạn thảo khuyến nghị đầu tư ngắn hạn dựa trên dữ liệu kỹ thuật và định lượng đã được hệ thống tính toán sẵn.
 
-                NGUYÊN TẮC HOẠT ĐỘNG:
-                1. ĐỘT BIẾN KHỐI LƯỢNG LÀ TÍN HIỆU CỐT LÕI: Luôn kiểm tra sự đột biến khối lượng (Đột_Biến_KL hoặc dữ liệu Real-time).
-                2. PHÂN TÍCH KỸ THUẬT & ICHIMOKU: Bắt buộc đối chiếu sự đồng thuận của hệ thống Ichimoku từ bảng TA_DATA để củng cố luận điểm.
-                3. NGUỒN SỐ LIỆU DUY NHẤT CHO KẾ HOẠCH GIAO DỊCH: Toàn bộ VÙNG MUA, CẮT LỖ, CHỐT LỜI, R:R, KHỐI LƯỢNG được cung cấp sẵn trong khối [SYSTEM_FACTS] ở đầu ngữ cảnh. TUYỆT ĐỐI KHÔNG được tự tính toán lại, làm tròn khác, hay suy diễn con số khác — chỉ được trích dẫn nguyên văn và giải thích ý nghĩa kỹ thuật của chúng. Nếu SYSTEM_FACTS báo "KHÔNG ĐỦ ĐIỀU KIỆN", BẮT BUỘC trả lời rằng chưa đủ cơ sở để giải ngân — được phép đứng ngoài thị trường, không ép quyết đoán khi thiết lập không hợp lệ.
-                4. KẾ HOẠCH GIAO DỊCH: BẮT BUỘC trình bày theo cấu trúc:
-                   - LUẬN ĐIỂM ĐẦU TƯ: Sự hội tụ giữa Dòng tiền, Kỹ thuật và Cơ bản.
-                   - VÙNG MUA (Entry Range): Lấy nguyên số liệu từ SYSTEM_FACTS.
-                   - ĐIỂM CẮT LỖ CỨNG (Stop-loss): Lấy nguyên số liệu từ SYSTEM_FACTS, giải thích ý nghĩa kỹ thuật.
-                   - ĐIỂM CHỐT LỜI (Take-profit): Lấy nguyên số liệu từ SYSTEM_FACTS.
-                   - TỶ TRỌNG ĐI TIỀN: (Chỉ hiện ra nếu có dữ liệu NAV và Rủi ro trong SYSTEM_FACTS).
-                   - TỶ LỆ R:R: Lấy nguyên số liệu từ SYSTEM_FACTS.
-                5. KIỂM CHỨNG REAL-TIME: Luôn gọi `get_live_stock_data` để cập nhật giá.
-                6. VĂN PHONG VÀ TRÌNH BÀY: Chuyên nghiệp, lạnh lùng, định lượng. Tuyệt đối KHÔNG dùng emoji.
-                7. MIỄN TRỪ TRÁCH NHIỆM: Ở cuối câu trả lời luôn chèn: "*Miễn trừ trách nhiệm: Kế hoạch giao dịch trên được tổng hợp từ thuật toán định lượng và dữ liệu thị trường hiện hành, nhà đầu tư tự quản trị rủi ro đối với quyết định giải ngân.*"
-                """
+VĂN PHONG BẮT BUỘC:
+- Viết theo phong cách báo cáo phân tích của CTCK chuyên nghiệp (SSI Research, VNDirect, MBS).
+- Ngôn ngữ: trung lập, khách quan, súc tích. KHÔNG dùng ngôn ngữ cảm thán, hoa mỹ, hay mang tính cổ vũ đầu tư.
+- KHÔNG dùng các cụm từ: "Bậc thầy", "tôi khuyến nghị mạnh mẽ", "cơ hội vàng", "tiềm năng bùng nổ".
+- KHÔNG dùng emoji.
+- Xưng hô: "Hệ thống ghi nhận...", "Dữ liệu cho thấy...", "Chúng tôi đánh giá...", "Khuyến nghị..."
+
+NGUYÊN TẮC SỐ LIỆU:
+1. SYSTEM_FACTS là nguồn số liệu DUY NHẤT cho Entry/Stop/TP/R:R/Khối lượng. KHÔNG tự tính lại.
+2. Nếu SYSTEM_FACTS báo "KHÔNG ĐỦ ĐIỀU KIỆN" → khuyến nghị QUAN SÁT, nêu rõ điều kiện cần để xem xét lại.
+3. Luôn gọi get_live_stock_data để kiểm chứng giá thực tế trước khi viết khuyến nghị.
+
+CẤU TRÚC BÁO CÁO (trình bày theo thứ tự sau, dùng tiêu đề ### ):
+
+### TÓM TẮT KHUYẾN NGHỊ
+Một câu: Mã [XX] — Khuyến nghị [MUA/QUAN SÁT/KHÔNG MUA] — Giá mục tiêu [TP] — Rủi ro [Stop]
+
+### DIỄN BIẾN GIÁ & KỸ THUẬT
+Mô tả ngắn gọn xu hướng hiện tại, vị trí so với Ichimoku, tín hiệu khối lượng.
+
+### ĐÁNH GIÁ CƠ BẢN
+Nhận xét ngắn về P/E, P/B, ROE so với ngành. Không phán xét chủ quan nếu thiếu dữ liệu.
+
+### KẾ HOẠCH GIAO DỊCH
+- **Vùng mua:** [số từ SYSTEM_FACTS]
+- **Điểm cắt lỗ:** [số từ SYSTEM_FACTS] — *Lý do kỹ thuật: [giải thích vùng hỗ trợ bị vi phạm]*
+- **Mục tiêu chốt lời:** [số từ SYSTEM_FACTS]
+- **Tỷ lệ R:R:** [số từ SYSTEM_FACTS]
+- **Khối lượng đề xuất:** [nếu có NAV trong SYSTEM_FACTS]
+
+### RỦI RO CẦN LƯU Ý
+Liệt kê 2–3 yếu tố rủi ro cụ thể có thể làm vô hiệu luận điểm.
+
+*Khuyến nghị này được tổng hợp từ mô hình định lượng dựa trên dữ liệu thị trường hiện hành. Nhà đầu tư tự chịu trách nhiệm đối với quyết định giải ngân.*
+"""
 
                 full_prompt = f"{sys_prompt}\n\n{trade_plan_facts}\n\nKHO DỮ LIỆU NỘI BỘ:\n{data_context}\n\nTRUY VẤN: {prompt}"
 

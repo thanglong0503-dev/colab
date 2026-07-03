@@ -466,6 +466,22 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs, trade_plan=None):
     senkou_b = fnum(stock_ta.get('Senkou_B','N/A'), 0)
     tscore   = int(stock_rs.get('Tech_Score', 0)) if stock_rs else 0
 
+    # ── Giá trị mặc định cho tất cả biến (phòng trường hợp trade_plan None/invalid) ──
+    rec_text      = 'QUAN SÁT'
+    rec_bg        = '#64748B'
+    rec_fg        = 'white'
+    rec_horizon   = ''
+    entry_low     = 0
+    entry_high    = 0
+    stop_val      = 0
+    tp_val        = 0
+    rr_val        = 0
+    upside_pct    = 'N/A'
+    downside_pct  = 'N/A'
+    cp_num        = 0
+    htro1 = htro2 = khangcu1 = khangcu2 = 'N/A'
+    trading_table_html = '<p style="color:#94A3B8;font-size:12px;padding:12px 0;">Chưa đủ dữ liệu để thiết lập bảng giao dịch.</p>'
+
     # Khuyến nghị & màu
     if trade_plan and trade_plan.get('valid'):
         regime     = trade_plan.get('regime','')
@@ -531,10 +547,12 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs, trade_plan=None):
         </table>
         """
     else:
-        rec_text, rec_bg, rec_fg = 'QUAN SÁT', '#64748B', 'white'
-        entry_low = entry_high = stop_val = tp_val = rr_val = support_lv = 0
-        upside_pct = downside_pct = 'N/A'
-        trading_table_html = '<p style="color:#94A3B8;font-size:12px;">Chưa đủ dữ liệu để thiết lập bảng giao dịch.</p>'
+        # Các biến đã có giá trị mặc định ở trên — không cần gán lại
+        # trading_table_html cũng đã có default, nhưng nếu trade_plan không valid
+        # và có lý do cụ thể, hiển thị lý do đó
+        if trade_plan and not trade_plan.get('valid'):
+            reason = trade_plan.get('reason', 'Chưa đủ điều kiện thiết lập giao dịch.')
+            trading_table_html = f'<p style="color:#DC2626;font-size:12px;padding:12px 0;"><b>Chưa đủ điều kiện:</b> {reason}</p>'
 
     # ── Chart (truyền trade_plan để vẽ vùng Entry/Stop/TP) ──────────────────
     chart_b64 = generate_chart_base64(ticker_name, df_ta, trade_plan)

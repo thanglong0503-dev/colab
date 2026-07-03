@@ -468,38 +468,40 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs, trade_plan=None):
 
     # Khuyến nghị & màu
     if trade_plan and trade_plan.get('valid'):
-        regime = trade_plan.get('regime','')
-        win_rt = trade_plan.get('win_rate_est', 0)
-        if regime == 'UPTREND' and win_rt >= 60:
-            rec_text, rec_bg, rec_fg = 'MUA', '#059669', 'white'
-        elif regime == 'UPTREND':
-            rec_text, rec_bg, rec_fg = 'TÍCH LŨY', '#0078D4', 'white'
-        elif regime == 'DOWNTREND':
-            rec_text, rec_bg, rec_fg = 'KHÔNG MUA', '#DC2626', 'white'
-        else:
-            rec_text, rec_bg, rec_fg = 'QUAN SÁT', '#F59E0B', 'white'
+        regime     = trade_plan.get('regime','')
+        win_rt     = trade_plan.get('win_rate_est', 0)
+        rec_text   = trade_plan.get('rec_label', 'QUAN SÁT')
+        rec_horizon= trade_plan.get('rec_horizon', '')
+        actual_up  = trade_plan.get('upside_pct', 0)
+
+        if rec_text == 'MUA MẠNH':    rec_bg, rec_fg = '#059669', 'white'
+        elif rec_text == 'MUA':        rec_bg, rec_fg = '#0078D4', 'white'
+        elif rec_text == 'TÍCH LŨY':   rec_bg, rec_fg = '#7C3AED', 'white'
+        elif rec_text == 'NGẮN HẠN':   rec_bg, rec_fg = '#F59E0B', 'white'
+        else:                           rec_bg, rec_fg = '#64748B', 'white'
 
         entry_low  = trade_plan.get('entry_low', 0)
         entry_high = trade_plan.get('entry_high', 0)
         stop_val   = trade_plan.get('stop_loss', 0)
         tp_val     = trade_plan.get('take_profit', 0)
         rr_val     = trade_plan.get('rr_ratio', 0)
-        support_lv = trade_plan.get('support_level', 0)
 
         try:
-            cp_num = float(stock_rs.get('Giá', 0)) or entry_low
-            upside_pct = f"{(tp_val - cp_num)/cp_num*100:+.1f}%" if cp_num > 0 else 'N/A'
+            cp_num = float(trade_plan.get('current_price', 0))
+            upside_pct   = f"+{actual_up:.1f}%" if actual_up >= 0 else f"{actual_up:.1f}%"
             downside_pct = f"{(stop_val - cp_num)/cp_num*100:.1f}%" if cp_num > 0 else 'N/A'
         except Exception:
-            upside_pct = downside_pct = 'N/A'
+            cp_num = 0; upside_pct = 'N/A'; downside_pct = 'N/A'
 
-        # Bảng hỗ trợ/kháng cự
+        # Bảng hỗ trợ/kháng cự từ Ichimoku
         try:
-            sen_a_f = float(stock_ta.get('Senkou_A', 0))
-            sen_b_f = float(stock_ta.get('Senkou_B', 0))
-            htro1  = fnum(max(float(stock_ta.get('Kijun_sen',0)), float(stock_ta.get('Tenkan_sen',0))), 0)
-            htro2  = fnum(min(sen_a_f, sen_b_f), 0)
-            khangcu1 = fnum(max(sen_a_f, sen_b_f), 0)
+            ten_f = _safe_float(stock_ta.get('Tenkan_sen', 0))
+            kij_f = _safe_float(stock_ta.get('Kijun_sen',  0))
+            sen_a = _safe_float(stock_ta.get('Senkou_A',   0))
+            sen_b = _safe_float(stock_ta.get('Senkou_B',   0))
+            htro1    = fnum(max(ten_f, kij_f), 0) if max(ten_f, kij_f) > 0 else 'N/A'
+            htro2    = fnum(min(ten_f, kij_f), 0) if min(ten_f, kij_f) > 0 else 'N/A'
+            khangcu1 = fnum(max(sen_a, sen_b), 0) if max(sen_a, sen_b) > 0 else 'N/A'
             khangcu2 = fnum(tp_val * 1.05, 0)
         except Exception:
             htro1 = htro2 = khangcu1 = khangcu2 = 'N/A'
@@ -541,35 +543,40 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs, trade_plan=None):
     peer_rows_html = ""
     if industry and not df_rs.empty:
         peers = df_rs[(df_rs['Ngành']==industry)&(df_rs['Mã CK']!=ticker_name)]\
-                .sort_values('RS_1M',ascending=False).head(4)
+                .sort_values('RS_1M',ascending=False).head(10)
         for _, row in peers.iterrows():
+            p_trạng = str(row.get('Trạng Thái',''))
+            p_color = '#059669' if 'KHẢ QUAN' in p_trạng else ('#DC2626' if 'TIÊU CỰC' in p_trạng else '#64748B')
             peer_rows_html += f"""
-            <tr style="border-bottom:1px solid #E2E8F0;font-size:11px;">
-                <td style="padding:5px 8px;font-weight:600;">{row.get('Mã CK','')}</td>
-                <td style="text-align:right;padding:5px 8px;">{fnum(row.get('P/E',''))}</td>
-                <td style="text-align:right;padding:5px 8px;">{fnum(row.get('P/B',''))}</td>
-                <td style="text-align:right;padding:5px 8px;">{fnum(row.get('ROE (%)',''),pct=True)}</td>
-                <td style="text-align:right;padding:5px 8px;">{fnum(row.get('RS_1M',''),0)}</td>
-                <td style="text-align:right;padding:5px 8px;">{str(row.get('Trạng Thái',''))}</td>
+            <tr style="border-bottom:1px solid #E2E8F0;font-size:10px;">
+                <td style="padding:4px 6px;font-weight:600;">{row.get('Mã CK','')}</td>
+                <td style="text-align:right;padding:4px 6px;">{fnum(row.get('P/E',''))}</td>
+                <td style="text-align:right;padding:4px 6px;">{fnum(row.get('P/B',''))}</td>
+                <td style="text-align:right;padding:4px 6px;">{fnum(row.get('ROE (%)',''),pct=True)}</td>
+                <td style="text-align:right;padding:4px 6px;">{fnum(row.get('RS_1M',''),0)}</td>
+                <td style="text-align:right;padding:4px 6px;">{fnum(row.get('RS_3M',''),0)}</td>
+                <td style="text-align:right;padding:4px 6px;color:{p_color};font-weight:600;">{p_trạng}</td>
             </tr>"""
 
     peer_table = f"""
-    <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:8px;">
-      <tr style="background:#F1F5F9;font-weight:700;font-size:11px;">
-        <td style="padding:5px 8px;">Mã CK</td>
-        <td style="text-align:right;padding:5px 8px;">P/E</td>
-        <td style="text-align:right;padding:5px 8px;">P/B</td>
-        <td style="text-align:right;padding:5px 8px;">ROE</td>
-        <td style="text-align:right;padding:5px 8px;">RS 1M</td>
-        <td style="text-align:right;padding:5px 8px;">Trạng thái</td>
+    <table style="width:100%;border-collapse:collapse;font-size:10px;margin-top:8px;">
+      <tr style="background:#1a1a2e;color:white;font-weight:700;font-size:10px;">
+        <td style="padding:5px 6px;">Mã CK</td>
+        <td style="text-align:right;padding:5px 6px;">P/E</td>
+        <td style="text-align:right;padding:5px 6px;">P/B</td>
+        <td style="text-align:right;padding:5px 6px;">ROE</td>
+        <td style="text-align:right;padding:5px 6px;">RS 1M</td>
+        <td style="text-align:right;padding:5px 6px;">RS 3M</td>
+        <td style="text-align:right;padding:5px 6px;">Trạng thái</td>
       </tr>
-      <tr style="background:#EFF6FF;font-weight:700;font-size:11px;border-bottom:2px solid #0078D4;">
-        <td style="padding:5px 8px;color:#0078D4;">{ticker_name}</td>
-        <td style="text-align:right;padding:5px 8px;">{pe}</td>
-        <td style="text-align:right;padding:5px 8px;">{pb}</td>
-        <td style="text-align:right;padding:5px 8px;">{roe}</td>
-        <td style="text-align:right;padding:5px 8px;">{rs_1m}</td>
-        <td style="text-align:right;padding:5px 8px;">{cloud}</td>
+      <tr style="background:#EFF6FF;font-weight:700;font-size:10px;border-bottom:2px solid #0078D4;">
+        <td style="padding:5px 6px;color:#0078D4;">{ticker_name} ★</td>
+        <td style="text-align:right;padding:5px 6px;">{pe}</td>
+        <td style="text-align:right;padding:5px 6px;">{pb}</td>
+        <td style="text-align:right;padding:5px 6px;">{roe}</td>
+        <td style="text-align:right;padding:5px 6px;">{rs_1m}</td>
+        <td style="text-align:right;padding:5px 6px;">{rs_3m}</td>
+        <td style="text-align:right;padding:5px 6px;">{cloud}</td>
       </tr>
       {peer_rows_html}
     </table>
@@ -581,28 +588,22 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs, trade_plan=None):
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body, div { font-family: 'Be Vietnam Pro', 'Roboto', sans-serif; }
-      .page { width: 210mm; min-height: 297mm; background: white; position: relative; overflow: hidden; }
-      .page-break { page-break-before: always; break-before: always; }
+      .page { width: 100%; background: white; padding-bottom: 40px; }
+      .new-page { page-break-before: always; break-before: page; padding-top: 0; }
       .avoid-break { page-break-inside: avoid; break-inside: avoid; }
       .header-bar { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
                     padding: 14px 28px; display: flex; justify-content: space-between; align-items: center; }
       .footer-bar { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-                    color: #94A3B8; font-size: 9px; padding: 8px 28px;
+                    color: #94A3B8; font-size: 9px; padding: 8px 28px; margin-top: 20px;
                     display: flex; justify-content: space-between; align-items: center; }
       .accent { color: #7C3AED; }
       .section-title { font-size: 11px; font-weight: 700; color: #1a1a2e;
                        text-transform: uppercase; letter-spacing: 0.8px;
                        border-left: 3px solid #7C3AED; padding-left: 8px; margin-bottom: 10px; }
       .card { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 14px; }
-      .badge-buy  { background:#059669; color:white; font-weight:800; font-size:22px;
-                    padding: 8px 24px; border-radius:6px; display:inline-block; letter-spacing:1px; }
-      .badge-watch{ background:#F59E0B; color:white; font-weight:800; font-size:22px;
-                    padding: 8px 24px; border-radius:6px; display:inline-block; }
-      .badge-sell { background:#DC2626; color:white; font-weight:800; font-size:22px;
-                    padding: 8px 24px; border-radius:6px; display:inline-block; }
       .kpi-box { text-align:center; padding: 8px 4px; }
       .kpi-label { font-size:9px; color:#64748B; text-transform:uppercase; letter-spacing:0.5px; font-weight:600; }
-      .kpi-val   { font-size:15px; font-weight:800; color:#1a1a2e; margin-top:2px; }
+      .kpi-val   { font-size:14px; font-weight:800; color:#1a1a2e; margin-top:2px; }
       td, th { vertical-align: middle; }
     </style>
     """
@@ -645,23 +646,27 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs, trade_plan=None):
           <!-- Box Khuyến nghị -->
           <div class="card avoid-break" style="margin-bottom:12px;text-align:center;">
             <div class="kpi-label" style="margin-bottom:6px;">KHUYẾN NGHỊ</div>
-            <div class="{('badge-buy' if rec_text in ('MUA','TÍCH LŨY') else ('badge-sell' if rec_text=='KHÔNG MUA' else 'badge-watch'))}">{rec_text}</div>
-            <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+            <div style="background:{rec_bg};color:{rec_fg};font-weight:800;font-size:16px;
+                 padding:7px 14px;border-radius:6px;display:inline-block;letter-spacing:1px;">
+              {rec_text}
+            </div>
+            <div style="font-size:9px;color:#94A3B8;margin-top:4px;">{rec_horizon}</div>
+            <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:6px;">
               <div class="kpi-box" style="border-right:1px solid #E2E8F0;">
                 <div class="kpi-label">Giá hiện tại</div>
-                <div class="kpi-val" style="font-size:13px;">{gia_ht}</div>
+                <div class="kpi-val" style="font-size:12px;">{gia_ht}</div>
               </div>
               <div class="kpi-box">
                 <div class="kpi-label">Mục tiêu</div>
-                <div class="kpi-val" style="font-size:13px;color:#059669;">{fnum(tp_val,0) if tp_val else 'N/A'}</div>
+                <div class="kpi-val" style="font-size:12px;color:#059669;">{fnum(tp_val,0) if tp_val else 'N/A'}</div>
               </div>
               <div class="kpi-box" style="border-right:1px solid #E2E8F0;">
                 <div class="kpi-label">Upside</div>
-                <div class="kpi-val" style="font-size:13px;color:#059669;">{upside_pct}</div>
+                <div class="kpi-val" style="font-size:12px;color:#059669;">{upside_pct}</div>
               </div>
               <div class="kpi-box">
                 <div class="kpi-label">Cắt lỗ</div>
-                <div class="kpi-val" style="font-size:13px;color:#DC2626;">{fnum(stop_val,0) if stop_val else 'N/A'}</div>
+                <div class="kpi-val" style="font-size:12px;color:#DC2626;">{fnum(stop_val,0) if stop_val else 'N/A'}</div>
               </div>
             </div>
           </div>
@@ -783,7 +788,7 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs, trade_plan=None):
                      if chart_b64 else '<div style="color:#94A3B8;text-align:center;padding:40px;">Không tải được biểu đồ</div>'
 
     page2 = f"""
-    <div class="page page-break">
+    <div class="page new-page">
       <!-- HEADER -->
       <div class="header-bar">
         <div>
@@ -869,7 +874,7 @@ def render_pdf_button(ai_content, ticker_name, dict_dfs, trade_plan=None):
     # TRANG 3: DISCLAIMER + THÔNG TIN TỔ CHỨC
     # ══════════════════════════════════════════════════════════════════════════
     page3 = f"""
-    <div class="page page-break">
+    <div class="page new-page">
       <div class="header-bar">
         <div>
           <div style="color:white;font-size:13px;font-weight:800;">LINANCE<span class="accent">.CORE</span></div>
@@ -1567,15 +1572,36 @@ def calculate_trade_plan(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame) 
             result["reason"] = "Stop-loss không hợp lệ."
             return result
 
-        # ── 10. TP — PHẢI > GIÁ HIỆN TẠI, KHÁNG CỰ CHỈ GIỚI HẠN KHI > CP+1% ─
-        tp_primary = entry_low + risk_per_share * rr_use
+        # ── 10. TP — PHƯƠNG PHÁP TRUNG-DÀI HẠN (TARGET 15–35% UPSIDE) ──────
+        # Tổ chức quant dùng 2 phương pháp tính TP rồi lấy giá trị hợp lý nhất:
+        # (A) Price momentum target: current_price × upside_factor (15–35% tùy chất lượng)
+        # (B) RR-based target: entry + RR × risk (đảm bảo R:R đủ hấp dẫn)
+        # TP cuối = max(A, B), sau đó kiểm tra kháng cự
 
-        # Đảm bảo TP > current_price (ít nhất 0.5% trên giá hiện tại)
-        tp_minimum = round(current_price * 1.005, 0)
+        # Upside target theo win rate (chuẩn báo cáo CTCK 3-6 tháng)
+        if win_rate_est >= 65:
+            upside_target = 0.25   # 25% — MUA MẠNH
+            rec_horizon   = "Trung hạn (3–6 tháng)"
+        elif win_rate_est >= 55:
+            upside_target = 0.20   # 20% — MUA
+            rec_horizon   = "Trung hạn (2–4 tháng)"
+        elif win_rate_est >= 45:
+            upside_target = 0.15   # 15% — TÍCH LŨY
+            rec_horizon   = "Ngắn-trung hạn (1–3 tháng)"
+        else:
+            upside_target = 0.12   # 12% — NGẮN HẠN
+            rec_horizon   = "Ngắn hạn (1–2 tháng)"
+
+        tp_momentum = round(current_price * (1 + upside_target), 0)
+        tp_rr_based = entry_low + risk_per_share * rr_use
+        tp_primary  = max(tp_momentum, tp_rr_based)
+
+        # TP phải > current_price ít nhất upside_target/2
+        tp_minimum = round(current_price * (1 + upside_target * 0.5), 0)
         tp_primary = max(tp_primary, tp_minimum)
 
-        # Kháng cự chỉ dùng nếu nằm trên giá hiện tại ít nhất 1%
-        resistance_threshold = current_price * 1.01
+        # Kháng cự chỉ giới hạn TP nếu R:R tại kháng cự đó vẫn ≥ rr_min
+        resistance_threshold = current_price * 1.03  # kháng cự cần cách giá ít nhất 3%
         resistance_candidates = []
         if swing_high_10 > resistance_threshold:
             resistance_candidates.append(("Swing High 10p", swing_high_10))
@@ -1584,55 +1610,63 @@ def calculate_trade_plan(ticker: str, df_rs: pd.DataFrame, df_ta: pd.DataFrame) 
         if senkou_a_val and senkou_a_val > resistance_threshold:
             resistance_candidates.append(("Senkou_A",       senkou_a_val))
 
-        tp_note = "Theo R:R chuẩn"
+        tp_note = f"Upside target {upside_target*100:.0f}% | {rec_horizon}"
+        take_profit = round(tp_primary, 0)
+
         if resistance_candidates:
             nearest_res_label, nearest_res = min(resistance_candidates, key=lambda x: x[1])
             if nearest_res < tp_primary:
                 rr_at_res = (nearest_res - entry_low) / risk_per_share
                 if rr_at_res >= rr_min:
+                    # Kháng cự đủ hấp dẫn → giới hạn TP sát dưới kháng cự
                     take_profit = round(nearest_res * 0.995, 0)
-                    tp_note = f"Giới hạn bởi {nearest_res_label} ({nearest_res:,.0f})"
-                else:
-                    take_profit = round(tp_primary, 0)
-                    tp_note = f"Kháng cự {nearest_res_label} quá gần — giữ TP theo R:R"
-            else:
-                take_profit = round(tp_primary, 0)
-        else:
-            take_profit = round(tp_primary, 0)
-
-        # Đảm bảo cuối cùng TP > current_price
-        take_profit = max(take_profit, tp_minimum)
+                    tp_note = f"{nearest_res_label} @ {nearest_res:,.0f} | {rec_horizon}"
+                # Nếu kháng cự quá gần → bỏ qua, giữ TP momentum
 
         actual_rr = round((take_profit - entry_low) / risk_per_share, 2)
+        actual_upside = round((take_profit - current_price) / current_price * 100, 1)
 
         if actual_rr < 1.5:
             result["reason"] = (
-                f"R:R thực tế ({actual_rr}) < 1.5 — không đủ hấp dẫn. "
-                f"Giá hiện tại ({current_price:,.0f}) đang quá xa hỗ trợ hoặc sát kháng cự."
+                f"R:R thực tế ({actual_rr}) < 1.5. "
+                f"Giá ({current_price:,.0f}) quá xa hỗ trợ. Chờ pullback."
             )
             return result
 
+        # ── 11. PHÂN LOẠI KHUYẾN NGHỊ THEO UPSIDE CHUẨN CTCK ───────────────
+        if actual_upside >= 20:
+            rec_label = "MUA MẠNH"
+        elif actual_upside >= 15:
+            rec_label = "MUA"
+        elif actual_upside >= 10:
+            rec_label = "TÍCH LŨY"
+        else:
+            rec_label = "NGẮN HẠN"
+
         result.update({
-            "valid":         True,
-            "ticker":        ticker,
-            "regime":        regime,
-            "trend_points":  trend_points,
-            "win_rate_est":  win_rate_est,
-            "quality_label": quality_label,
-            "current_price": round(current_price, 0),
-            "atr14":         round(atr14, 0),
-            "atr_use":       round(atr_use, 0),
-            "support_label": support_label,
-            "support_level": round(support_level, 0),
-            "entry_low":     entry_low,
-            "entry_high":    entry_high,
-            "stop_loss":     stop_loss,
-            "stop_reason":   stop_reason,
-            "take_profit":   take_profit,
-            "risk_per_share":round(risk_per_share, 0),
-            "rr_ratio":      actual_rr,
-            "rr_used":       rr_use,
-            "tp_note":       tp_note,
+            "valid":          True,
+            "ticker":         ticker,
+            "regime":         regime,
+            "trend_points":   trend_points,
+            "win_rate_est":   win_rate_est,
+            "quality_label":  quality_label,
+            "rec_label":      rec_label,
+            "rec_horizon":    rec_horizon,
+            "current_price":  round(current_price, 0),
+            "atr14":          round(atr14, 0),
+            "atr_use":        round(atr_use, 0),
+            "support_label":  support_label,
+            "support_level":  round(support_level, 0),
+            "entry_low":      entry_low,
+            "entry_high":     entry_high,
+            "stop_loss":      stop_loss,
+            "stop_reason":    stop_reason,
+            "take_profit":    take_profit,
+            "risk_per_share": round(risk_per_share, 0),
+            "rr_ratio":       actual_rr,
+            "rr_used":        rr_use,
+            "upside_pct":     actual_upside,
+            "tp_note":        tp_note,
         })
         return result
 
@@ -1764,7 +1798,9 @@ if "messages" not in st.session_state:
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        content_text = message.get("content") or ""
+        if content_text:
+            st.markdown(content_text)
 
         if "chart" in message and message["chart"] is not None:
             st.line_chart(message["chart"])
@@ -1772,11 +1808,16 @@ for message in st.session_state.messages:
         if message["role"] == "assistant":
             col_btn1, col_btn2, _ = st.columns([1.5, 2.5, 6])
             with col_btn1:
-                components.html(render_copy_button(message["content"]), height=35)
+                components.html(render_copy_button(content_text), height=35)
             with col_btn2:
-                ticker_match = re.search(r'\b[A-Z0-9]{3,4}\b', message["content"])
-                ticker_name = ticker_match.group(0) if ticker_match else "STOCK"
-                components.html(render_pdf_button(message["content"], ticker_name, dict_dfs, message.get("trade_plan")), height=35)
+                # Ưu tiên lấy ticker từ trade_plan (chính xác hơn regex trên text)
+                stored_plan = message.get("trade_plan")
+                if stored_plan and stored_plan.get("ticker"):
+                    ticker_name = stored_plan["ticker"]
+                else:
+                    ticker_match = re.search(r'\b[A-Z]{3,4}\b', content_text)
+                    ticker_name = ticker_match.group(0) if ticker_match else "STOCK"
+                components.html(render_pdf_button(content_text, ticker_name, dict_dfs, stored_plan), height=35)
 
 if prompt := st.chat_input("Nhập mã CK hoặc truy vấn..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -1831,42 +1872,47 @@ if prompt := st.chat_input("Nhập mã CK hoặc truy vấn..."):
 
                 sys_prompt = """
 Bạn là Chuyên viên Phân tích Định lượng cấp cao (Senior Quantitative Analyst) tại LINANCE Research.
-Nhiệm vụ: Soạn thảo khuyến nghị đầu tư ngắn hạn dựa trên dữ liệu kỹ thuật và định lượng đã được hệ thống tính toán sẵn.
+Nhiệm vụ: Soạn thảo báo cáo khuyến nghị đầu tư theo chuẩn tổ chức định lượng (Quant Fund / CTCK Research).
 
-VĂN PHONG BẮT BUỘC:
-- Viết theo phong cách báo cáo phân tích của CTCK chuyên nghiệp (SSI Research, VNDirect, MBS).
-- Ngôn ngữ: trung lập, khách quan, súc tích. KHÔNG dùng ngôn ngữ cảm thán, hoa mỹ, hay mang tính cổ vũ đầu tư.
-- KHÔNG dùng các cụm từ: "Bậc thầy", "tôi khuyến nghị mạnh mẽ", "cơ hội vàng", "tiềm năng bùng nổ".
-- KHÔNG dùng emoji.
+VĂN PHONG:
+- Chuẩn báo cáo CTCK: SSI Research, VNDirect, MBS. Trung lập, khách quan, súc tích.
+- KHÔNG dùng: "Bậc thầy", "cơ hội vàng", "tiềm năng bùng nổ", emoji, ngôn ngữ cổ vũ.
 - Xưng hô: "Hệ thống ghi nhận...", "Dữ liệu cho thấy...", "Chúng tôi đánh giá...", "Khuyến nghị..."
 
-NGUYÊN TẮC SỐ LIỆU:
-1. SYSTEM_FACTS là nguồn số liệu DUY NHẤT cho Entry/Stop/TP/R:R/Khối lượng. KHÔNG tự tính lại.
-2. Nếu SYSTEM_FACTS báo "KHÔNG ĐỦ ĐIỀU KIỆN" → khuyến nghị QUAN SÁT, nêu rõ điều kiện cần để xem xét lại.
-3. Luôn gọi get_live_stock_data để kiểm chứng giá thực tế trước khi viết khuyến nghị.
+KHUNG PHÂN LOẠI KHUYẾN NGHỊ (BẮT BUỘC dùng đúng label từ SYSTEM_FACTS):
+- MUA MẠNH: Upside ≥ 20%, win rate cao, UPTREND rõ → horizon 3–6 tháng
+- MUA: Upside 15–20%, tín hiệu tốt → horizon 2–4 tháng  
+- TÍCH LŨY: Upside 10–15%, xu hướng trung tính-tích cực → horizon 1–3 tháng
+- NGẮN HẠN: Upside 8–12%, giao dịch cơ hội → horizon 1–2 tháng
+- QUAN SÁT: Chưa đủ điều kiện — nêu rõ điều kiện kích hoạt
 
-CẤU TRÚC BÁO CÁO (trình bày theo thứ tự sau, dùng tiêu đề ### ):
+NGUYÊN TẮC SỐ LIỆU:
+1. SYSTEM_FACTS = nguồn DUY NHẤT cho Entry/Stop/TP/R:R. KHÔNG tự tính lại.
+2. Luôn gọi get_live_stock_data để xác nhận giá real-time trước khi viết.
+3. Nếu giá real-time khác giá trong SYSTEM_FACTS > 2% → ghi chú sự chênh lệch.
+4. SYSTEM_FACTS báo "KHÔNG ĐỦ ĐIỀU KIỆN" → khuyến nghị QUAN SÁT, nêu điều kiện cần.
+
+CẤU TRÚC BÁO CÁO (dùng ### cho tiêu đề):
 
 ### TÓM TẮT KHUYẾN NGHỊ
-Một câu: Mã [XX] — Khuyến nghị [MUA/QUAN SÁT/KHÔNG MUA] — Giá mục tiêu [TP] — Rủi ro [Stop]
+Một dòng: Mã [XX] — [rec_label] — Mục tiêu [TP] (+upside%) — Cắt lỗ [Stop] — Horizon [X tháng]
 
 ### DIỄN BIẾN GIÁ & KỸ THUẬT
-Mô tả ngắn gọn xu hướng hiện tại, vị trí so với Ichimoku, tín hiệu khối lượng.
+Xu hướng, vị trí Ichimoku, tín hiệu khối lượng, RSI/MFI. Ngắn gọn 3–4 câu.
 
 ### ĐÁNH GIÁ CƠ BẢN
-Nhận xét ngắn về P/E, P/B, ROE so với ngành. Không phán xét chủ quan nếu thiếu dữ liệu.
+P/E, P/B, ROE so sánh ngành. Nhận xét định giá. 2–3 câu.
 
 ### KẾ HOẠCH GIAO DỊCH
-- **Vùng mua:** [số từ SYSTEM_FACTS]
-- **Điểm cắt lỗ:** [số từ SYSTEM_FACTS] — *Lý do kỹ thuật: [giải thích vùng hỗ trợ bị vi phạm]*
-- **Mục tiêu chốt lời:** [số từ SYSTEM_FACTS]
-- **Tỷ lệ R:R:** [số từ SYSTEM_FACTS]
-- **Khối lượng đề xuất:** [nếu có NAV trong SYSTEM_FACTS]
+- **Vùng mua:** [từ SYSTEM_FACTS]
+- **Điểm cắt lỗ:** [từ SYSTEM_FACTS] — *Lý do: [giải thích hỗ trợ kỹ thuật bị vi phạm]*
+- **Mục tiêu chốt lời:** [từ SYSTEM_FACTS] — *Lý do: [kháng cự kỹ thuật/upside target]*
+- **Tỷ lệ R:R:** [từ SYSTEM_FACTS]
 
 ### RỦI RO CẦN LƯU Ý
-Liệt kê 2–3 yếu tố rủi ro cụ thể có thể làm vô hiệu luận điểm.
+2–3 rủi ro cụ thể (thị trường chung, kỹ thuật, cơ bản).
 
-*Khuyến nghị này được tổng hợp từ mô hình định lượng dựa trên dữ liệu thị trường hiện hành. Nhà đầu tư tự chịu trách nhiệm đối với quyết định giải ngân.*
+*Khuyến nghị tổng hợp từ mô hình định lượng LINANCE. Nhà đầu tư tự chịu trách nhiệm với quyết định giải ngân.*
 """
 
                 full_prompt = f"{sys_prompt}\n\n{trade_plan_facts}\n\nKHO DỮ LIỆU NỘI BỘ:\n{data_context}\n\nTRUY VẤN: {prompt}"
@@ -1952,20 +1998,26 @@ Liệt kê 2–3 yếu tố rủi ro cụ thể có thể làm vô hiệu luận
                 response = None
 
         if response:
-            st.markdown(response.text)
+            response_text = getattr(response, 'text', None) or ""
+            if response_text:
+                st.markdown(response_text)
 
             col_btn1, col_btn2, _ = st.columns([1.5, 2.5, 6])
             with col_btn1:
-                components.html(render_copy_button(response.text), height=35)
+                components.html(render_copy_button(response_text), height=35)
             with col_btn2:
-                ticker_match = re.search(r'\b[A-Z0-9]{3,4}\b', response.text)
-                ticker_name = ticker_match.group(0) if ticker_match else "STOCK"
-                components.html(render_pdf_button(response.text, ticker_name, dict_dfs, plan if ticker_detect else None), height=35)
+                current_plan = plan if ticker_detect else None
+                if current_plan and current_plan.get("ticker"):
+                    ticker_name = current_plan["ticker"]
+                else:
+                    ticker_match = re.search(r'\b[A-Z]{3,4}\b', response_text)
+                    ticker_name = ticker_match.group(0) if ticker_match else "STOCK"
+                components.html(render_pdf_button(response_text, ticker_name, dict_dfs, current_plan), height=35)
 
             if chart_data_to_save is not None:
                 st.line_chart(chart_data_to_save)
 
-            new_msg = {"role": "assistant", "content": response.text}
+            new_msg = {"role": "assistant", "content": response_text}
             if chart_data_to_save is not None:
                 new_msg["chart"] = chart_data_to_save
             new_msg["trade_plan"] = plan if ticker_detect else None
